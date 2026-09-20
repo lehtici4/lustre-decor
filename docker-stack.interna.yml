@@ -6,8 +6,8 @@
 # Diferenças reais de rodar em Swarm em vez de Compose direto, pra não
 # surpreender ninguém:
 #   - Swarm não builda imagem (sem suporte a `build:` em `docker stack
-#     deploy`). A imagem precisa já existir neste host ANTES do primeiro
-#     deploy: `docker compose -f docker-compose.prod.yml build backend`.
+#     deploy`). A imagem vem do GHCR (ghcr.io/lehtici4/lustre-decor-backend);
+#     antes do deploy: `docker login ghcr.io` e `docker pull` da tag.
 #   - `depends_on` não existe em Swarm — não está neste arquivo de propósito.
 #     Quem substitui é o `deploy.restart_policy` de cada serviço: se o
 #     backend subir antes do Postgres estar pronto, o `migrate` do
@@ -18,7 +18,7 @@
 #
 # Uso (na VM interna, depois de `docker swarm init` e dos `docker secret
 # create` abaixo):
-#   docker compose -f docker-compose.prod.yml build backend
+#   docker pull ghcr.io/lehtici4/lustre-decor-backend:latest
 #   docker stack deploy -c docker-stack.interna.yml lustre_decor
 #
 # Validado só localmente via `docker compose -f docker-stack.interna.yml
@@ -30,7 +30,7 @@
 
 services:
   backend:
-    image: lustre_decor-backend-prod
+    image: ghcr.io/lehtici4/lustre-decor-backend:latest
     init: true
     environment:
       APP_ENV: production
@@ -90,16 +90,15 @@ services:
     tmpfs:
       - /tmp
     volumes:
-      # /app/staticfiles em tmpfs: collectstatic roda de novo a cada início
-      # (mesma lógica do /tmp) — só precisa de um lugar gravável, sem volume
-      # nem persistir. O waf (outra VM) não lê mais daqui — ver WhiteNoise em
-      # backend/config/settings/base.py. mode 1777 explícito: só o /tmp
-      # ganha isso automaticamente do runtime, outros caminhos em tmpfs não
-      # (nascem root:root 755, e o collectstatic não consegue escrever).
-      - type: tmpfs
-        target: /app/staticfiles
-        tmpfs:
-          mode: 01777
+      # /app/staticfiles em volume nomeado (NÃO tmpfs): o Swarm ignorou o
+      # `mode: 01777` do tmpfs e o mount nasceu root:root 755, então o
+      # collectstatic (usuário 10001) tomava PermissionError em
+      # /app/staticfiles/admin. Um volume nomeado novo copia dono e conteúdo
+      # do diretório da imagem (criado com chown app:app no Dockerfile,
+      # estágio production), então fica gravável sem depender do suporte a
+      # opções de tmpfs do Swarm. O collectstatic roda de novo a cada início
+      # (idempotente), então persistir não faz mal.
+      - staticfiles_data:/app/staticfiles
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -174,6 +173,7 @@ networks:
 
 volumes:
   postgres_data:
+  staticfiles_data:
 
 secrets:
   # external: true = já criado no Swarm, não um arquivo local (diferente de
