@@ -87,9 +87,12 @@ services:
       - application_net
       - database_net
     read_only: true
-    tmpfs:
-      - /tmp
     volumes:
+      # /tmp em volume nomeado (NÃO tmpfs): mesmo problema do staticfiles — o
+      # Swarm não aplica o 1777 no tmpfs, o /tmp nasce root:root 755 e o Python
+      # (tempfile) falha com "No usable temporary directory". O volume novo
+      # herda 1777 do /tmp da imagem.
+      - tmp_data:/tmp
       # /app/staticfiles em volume nomeado (NÃO tmpfs): o Swarm ignorou o
       # `mode: 01777` do tmpfs e o mount nasceu root:root 755, então o
       # collectstatic (usuário 10001) tomava PermissionError em
@@ -174,6 +177,7 @@ networks:
 volumes:
   postgres_data:
   staticfiles_data:
+  tmp_data:
 
 secrets:
   # external: true = já criado no Swarm, não um arquivo local (diferente de
