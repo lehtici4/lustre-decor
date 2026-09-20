@@ -1,0 +1,140 @@
+# Vhost do Lustre Decor para a imagem owasp/modsecurity-crs:nginx. O
+# ModSecurity + OWASP CRS já é habilitado globalmente por
+# /etc/nginx/templates/conf.d/modsecurity.conf.template (não tocado aqui) —
+# roda antes de qualquer location abaixo, sem precisar repetir nada aqui.
+#
+# Arquivo processado por envsubst no entrypoint da imagem (por isso a
+# extensão .template) — usa ${WAF_EXTRA_HOST} e ${BACKEND_UPSTREAM} de
+# propósito (substituídos na inicialização); todo o resto é texto nginx
+# normal ($http_host, $host etc., sem chaves), que o envsubst não toca. Ver
+# nginx/Dockerfile.
+
+# Rate limiting adicional no login, em complemento ao throttling do DRF
+# (defesa em profundidade — ver docs/security.md).
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;
+limit_req_status 429;
+
+# Allowlist do cabeçalho Host encaminhado ao backend: nunca repassar o valor
+# enviado pelo cliente sem validar (Host header injection — achado real do
+# Semgrep, regra generic.nginx.security.request-host-used, corrigido em
+# 2026-09-05). Só os hosts locais usados neste laboratório são aceitos.
+# Falso positivo revisado: o cabeçalho recebido aqui só decide um booleano
+# (0/1) contra uma allowlist explícita — o valor em si nunca é repassado sem
+# essa checagem (ver `if ($host_allowed = 0)` abaixo e nginx/proxy_params.conf).
+# ${WAF_EXTRA_HOST}: host(:porta) adicional pro ambiente onde isso rodar de
+# verdade (ex.: o IP da VM do lab) — definido via env var no compose, vazio
+# por padrão (vira uma entrada "" que nunca combina com um Host de verdade,
+# então não afeta nada quando não usado). Ver docker-compose.prod.yml.
+map $http_host $host_allowed { # nosemgrep: generic.nginx.security.request-host-used.request-host-used
+    default             0;
+    "localhost:8443"    1;
+    "127.0.0.1:8443"    1;
+    "localhost"         1;
+    "127.0.0.1"         1;
+    "${WAF_EXTRA_HOST}" 1;
+}
+
+# Porta 8080: só redireciona para HTTPS. Não serve app nem estático — nenhum
+# dado sensível trafega aqui, então dispensa a allowlist/headers abaixo.
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+    return 301 https://$host:8443$request_uri;
+}
+
+server {
+    listen 8443 ssl;
+    server_name _;
+
+    # Certificado autoassinado para uso local (ver README — "TLS local").
+    # Não é adequado para um domínio público de verdade: nesse caso a origem
+    # do certificado passa a ser uma CA confiável (ex.: Let's Encrypt), uma
+    # decisão arquitetural própria fora do escopo deste laboratório.
+    ssl_certificate /run/secrets/tls_cert;
+    ssl_certificate_key /run/secrets/tls_key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 1m;
+
+    if ($host_allowed = 0) {
+        return 400;
+    }
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy same-origin always;
+    add_header Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=()" always;
+    # style/script-src permitem cdnjs.cloudflare.com: a tela de login do
+    # django-two-factor-auth carrega Bootstrap/jQuery de lá (verificado em
+    # 2026-09-05). O restante da aplicação (SPA React) usa só same-origin.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    # Sem Strict-Transport-Security aqui de propósito: com certificado
+    # autoassinado, HSTS impede o navegador de deixar você "prosseguir mesmo
+    # assim" no aviso de certificado, travando o acesso local. Cabe ativar
+    # quando houver um certificado de CA confiável (ver nota acima).
+
+    # /healthz (healthcheck do container) e /metrics/nginx (stub_status,
+    # restrito por IP) vêm da própria imagem base — ver
+    # includes/location_common.conf.template.
+    include includes/location_common.conf;
+
+    # Artefatos estáticos do Django (admin, two-factor). Servidos pelo
+    # próprio backend via WhiteNoise (não por um volume compartilhado) —
+    # funciona igual com o waf e o backend no mesmo host ou em VMs
+    # separadas (ver docker-compose.dmz.yml). Ver backend/config/settings/base.py.
+    location /static/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    # ${BACKEND_UPSTREAM}: host:porta do backend — "backend:8000" (nome do
+    # serviço Docker) quando os dois estão no mesmo host/rede, ou um IP:porta
+    # de verdade (ex.: 192.168.9.50:8000) quando estão em VMs separadas. Ver
+    # docker-compose.prod.yml (padrão) e docker-compose.dmz.yml (duas VMs).
+    location = /api/v1/auth/login/ {
+        limit_req zone=login_limit burst=3 nodelay;
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    location /api/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    location /admin/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    # Sprint 2 (Zero Trust) — forward-auth, desativado. Antes de descomentar,
+    # trocar o `return 200` de /auth pelo proxy_pass ao Authelia: do jeito
+    # que está abaixo ele aprovaria qualquer requisição.
+    # location /api/admin/ {
+    #   auth_request /auth;
+    #   proxy_pass http://backend:8000;
+    # }
+    # location = /auth {
+    #   return 200;
+    # }
+
+    location /account/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    # SPA: rotas do React Router (ex.: /produtos/5) devem cair no index.html.
+    location / {
+        try_files $uri /index.html;
+    }
+}

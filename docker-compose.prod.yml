@@ -1,0 +1,203 @@
+name: ${COMPOSE_PROJECT_NAME:-lustre_decor}
+
+# Perfil "produção local": um único container (Nginx + ModSecurity + OWASP
+# CRS, imagem owasp/modsecurity-crs:nginx) serve o frontend compilado, termina
+# TLS (certificado autoassinado — ver README, "TLS local") e faz proxy para o
+# backend via Gunicorn, com um WAF na frente de toda requisição.
+#
+# Uso: docker compose -f docker-compose.prod.yml up --build
+
+services:
+  waf:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    init: true
+    ports:
+      # Padrão só loopback (uso local). Pra publicar na rede do lab, defina
+      # WAF_BIND_HOST no .env com o IP da interface real da VM (ou 0.0.0.0).
+      - "${WAF_BIND_HOST:-127.0.0.1}:8080:8080"
+      - "${WAF_BIND_HOST:-127.0.0.1}:8443:8443"
+    secrets:
+      - tls_cert
+      - tls_key
+    environment:
+      # Nível de paranoia do CRS (1-4): quanto mais alto, mais regras
+      # entram em ação e maior a chance de falso positivo. 1 é o padrão
+      # recomendado pelo próprio CRS como ponto de partida.
+      BLOCKING_PARANOIA: ${WAF_PARANOIA:-1}
+      # Host(:porta) adicional aceito pela allowlist do Nginx, além dos
+      # locais fixos (localhost/127.0.0.1) — ver
+      # nginx/templates/conf.d/default.conf.template. Ex.: 192.168.9.34:8443.
+      WAF_EXTRA_HOST: ${WAF_EXTRA_HOST:-}
+      # host:porta do backend. Default preserva o comportamento de hoje (os
+      # dois no mesmo host/rede Docker, endereçados pelo nome do serviço).
+      # Numa topologia de duas VMs (waf na DMZ, backend na rede interna),
+      # aponta pro IP real do backend — ver docker-compose.dmz.yml.
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-backend:8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - application_net
+    # Sem read_only aqui: a própria imagem base renderiza a configuração do
+    # Nginx e do ModSecurity a cada início (templates -> /etc/nginx,
+    # regras do CRS -> /etc/modsecurity.d), é assim que ela foi desenhada
+    # para funcionar. Ver docs/security.md — "Limites atuais".
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      # Reusa o script de healthcheck já embutido na imagem (curl contra
+      # /healthz na porta TLS), só com timings mais próximos dos outros
+      # serviços deste compose.
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    image: lustre_decor-backend-prod
+    build:
+      context: ./backend
+      target: production
+    init: true
+    environment:
+      APP_ENV: production
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-https://localhost:8443,https://127.0.0.1:8443}
+      # Sem isso (ou faltando o endereço real usado pra acessar a aplicação),
+      # POST/PUT/DELETE falha o CSRF silenciosamente — ver base.py.
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-https://localhost:8443,https://127.0.0.1:8443}
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-true}
+      # 0 enquanto o certificado for autoassinado (ver nginx/templates/conf.d/default.conf.template) —
+      # HSTS com certificado não confiável trava o "prosseguir mesmo assim"
+      # do navegador. Subir para 31536000 quando houver certificado de CA.
+      DJANGO_SECURE_HSTS_SECONDS: ${DJANGO_SECURE_HSTS_SECONDS:-0}
+      DJANGO_SECRET_KEY_FILE: /run/secrets/django_secret_key
+      POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      # Papel de execução normal do backend: só DML (sem DDL). Ver infra/postgres/init-app-role.sh.
+      POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-lustre_app_runtime}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+      # Papel dono do banco, usado só para `migrate` (precisa de DDL) — ver docker/entrypoint-production.sh.
+      POSTGRES_MIGRATION_USER: ${POSTGRES_USER:-lustre_app}
+      POSTGRES_MIGRATION_PASSWORD_FILE: /run/secrets/postgres_password
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Alertas de segurança (força bruta bloqueada, acesso a objeto de outro
+      # usuário) via e-mail para o Mailpit local — ver docs/security.md.
+      # DJANGO_ADMINS vazio por padrão: sem isso configurado no seu .env,
+      # os alertas simplesmente não são enviados (não quebra nada).
+      DJANGO_ADMINS: ${DJANGO_ADMINS:-}
+    secrets:
+      - django_secret_key
+      - postgres_password
+      - postgres_runtime_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - application_net
+      - database_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      # /app/staticfiles em tmpfs: o collectstatic do entrypoint-production.sh
+      # roda de novo a cada início mesmo (mesma lógica do /tmp) — não precisa
+      # de volume nomeado nem persistir, só de um lugar gravável apesar do
+      # read_only. O waf não lê mais daqui (ver WhiteNoise em
+      # backend/config/settings/base.py e o /static/ no template do Nginx).
+      # mode 1777 explícito: sem isso o tmpfs nasce root:root 755 e o
+      # collectstatic (rodando como o usuário sem privilégios da imagem)
+      # não consegue escrever — só o /tmp ganha 1777 automaticamente do
+      # runtime, outros caminhos em tmpfs não.
+      - type: tmpfs
+        target: /app/staticfiles
+        tmpfs:
+          mode: 01777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks:
+      - application_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17.6-alpine3.22
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
+      POSTGRES_USER: ${POSTGRES_USER:-lustre_app}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro
+    secrets:
+      - postgres_password
+      - postgres_runtime_password
+    networks:
+      - database_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  application_net:
+    driver: bridge
+  database_net:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:
+
+secrets:
+  django_secret_key:
+    file: ./secrets/django_secret_key.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  postgres_runtime_password:
+    file: ./secrets/postgres_runtime_password.txt
+  tls_cert:
+    file: ./secrets/tls/localhost.crt
+  tls_key:
+    file: ./secrets/tls/localhost.key

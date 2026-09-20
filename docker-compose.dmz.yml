@@ -1,0 +1,68 @@
+name: ${COMPOSE_PROJECT_NAME:-lustre_decor}
+
+# Perfil "DMZ": só o waf, pensado pra rodar sozinho na VM da DMZ
+# (192.168.9.34, ep137-pucpr), separada da VM que roda backend/postgres/
+# mailpit na rede interna (192.168.9.50, ep138-pucpr — ver
+# docker-stack.interna.yml, formato Swarm). Sem depends_on de backend: ele
+# não existe nesse host, só é alcançado pela rede via BACKEND_UPSTREAM.
+#
+# Uso (na VM da DMZ, depois de gerar o certificado — ver README):
+#   docker compose -f docker-compose.dmz.yml up -d --build
+
+services:
+  waf:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    init: true
+    ports:
+      # Porta pública 443 (não 8443), pra bater com o Quadro 2 do documento
+      # de arquitetura — o container continua escutando em 8080/8443
+      # internamente, só o mapeamento de porta no host muda.
+      - "192.168.9.34:80:8080"
+      - "192.168.9.34:443:8443"
+    secrets:
+      - tls_cert
+      - tls_key
+    environment:
+      BLOCKING_PARANOIA: ${WAF_PARANOIA:-1}
+      # Sem porta: 443 é a porta padrão HTTPS, o navegador não a inclui no
+      # cabeçalho Host — ver nginx/templates/conf.d/default.conf.template.
+      WAF_EXTRA_HOST: "192.168.9.34"
+      # IP real do backend na rede interna, alcançado via pfSense (DMZ ->
+      # interna, porta 8000 liberada). Ver docker-stack.interna.yml.
+      BACKEND_UPSTREAM: "192.168.9.50:8000"
+      # Sprint 2 (Zero Trust): liga o auth_request do Nginx (ainda comentado
+      # em nginx/templates/conf.d/default.conf.template). Ver docs/authentication.md.
+      AUTH_REQUEST_ENABLED: "false"
+    networks:
+      - application_net
+    # Sem read_only aqui: a própria imagem base renderiza a configuração do
+    # Nginx e do ModSecurity a cada início (templates -> /etc/nginx,
+    # regras do CRS -> /etc/modsecurity.d), é assim que ela foi desenhada
+    # para funcionar. Ver docs/security.md — "Limites atuais".
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  application_net:
+    driver: bridge
+
+secrets:
+  # Certificado próprio desta VM (SAN=IP:192.168.9.34), não o localhost.crt
+  # usado em dev/produção-local — gerar com:
+  #   ./infra/scripts/generate-tls-cert.sh 192.168.9.34
+  # e copiar secrets/tls/localhost.{crt,key} para secrets/tls/dmz.{crt,key}.
+  tls_cert:
+    file: ./secrets/tls/dmz.crt
+  tls_key:
+    file: ./secrets/tls/dmz.key

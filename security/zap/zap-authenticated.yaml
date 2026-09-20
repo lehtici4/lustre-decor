@@ -1,0 +1,46 @@
+env:
+  contexts:
+  - excludePaths: []
+    name: authenticated
+    urls:
+    - https://waf:8443/
+  parameters:
+    failOnError: false
+    progressToStdout: true
+jobs:
+- parameters:
+    enableTags: false
+    maxAlertsPerRule: 10
+  type: passiveScan-config
+- parameters: {}
+  requests:
+  - url: https://waf:8443/api/v1/auth/me/
+    method: GET
+  - url: https://waf:8443/api/v1/cart/
+    method: GET
+  - url: https://waf:8443/api/v1/orders/
+    method: GET
+  type: requestor
+- parameters:
+    maxDuration: 1
+    url: https://waf:8443/
+  type: spider
+- parameters:
+    maxDuration: 0
+  type: passiveScan-wait
+- parameters:
+    maxRuleDurationInMins: 1
+    maxScanDurationInMins: 5
+  type: activeScan
+- parameters:
+    format: Long
+    summaryFile: /home/zap/zap_out.json
+  rules: []
+  type: outputSummary
+- parameters:
+    reportDescription: 'Varredura autenticada (usuária de teste "zapauth"): cobre carrinho e pedidos, não só o catálogo público.'
+    reportDir: /zap/wrk/
+    reportFile: zap-report-authenticated.html
+    reportTitle: ZAP Scanning Report - Authenticated
+    template: traditional-html
+  type: report

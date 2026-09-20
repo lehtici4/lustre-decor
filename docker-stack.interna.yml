@@ -1,0 +1,191 @@
+# Perfil "interna" (rede interna, VM 192.168.9.50 — ep138-pucpr): backend +
+# postgres + mailpit, formato Swarm (docker stack deploy) — não
+# docker compose. Contraparte de docker-compose.dmz.yml, que roda o waf
+# sozinho na VM da DMZ (192.168.9.34 — ep137-pucpr).
+#
+# Diferenças reais de rodar em Swarm em vez de Compose direto, pra não
+# surpreender ninguém:
+#   - Swarm não builda imagem (sem suporte a `build:` em `docker stack
+#     deploy`). A imagem precisa já existir neste host ANTES do primeiro
+#     deploy: `docker compose -f docker-compose.prod.yml build backend`.
+#   - `depends_on` não existe em Swarm — não está neste arquivo de propósito.
+#     Quem substitui é o `deploy.restart_policy` de cada serviço: se o
+#     backend subir antes do Postgres estar pronto, o `migrate` do
+#     entrypoint-production.sh falha, o container sai, e o Swarm reinicia
+#     sozinho até dar certo.
+#   - Secrets vêm do Swarm (`external: true`), não de arquivo local — ver
+#     comentário no bloco `secrets:` no fim deste arquivo.
+#
+# Uso (na VM interna, depois de `docker swarm init` e dos `docker secret
+# create` abaixo):
+#   docker compose -f docker-compose.prod.yml build backend
+#   docker stack deploy -c docker-stack.interna.yml lustre_decor
+#
+# Validado só localmente via `docker compose -f docker-stack.interna.yml
+# config` (sintaxe/schema) — não foi testado contra um Swarm de verdade
+# nesta sessão. Antes do deploy real, vale conferir com `docker service ps`
+# e `docker service inspect` se cap_drop/read_only/security_opt/init foram
+# realmente aplicados (o suporte a esses campos em Swarm já variou entre
+# versões do Docker Engine).
+
+services:
+  backend:
+    image: lustre_decor-backend-prod
+    init: true
+    environment:
+      APP_ENV: production
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      # Fixo, não via ${VAR:-default}: testando este arquivo localmente, um
+      # .env com valor de outro perfil (dev) vazou pra cá silenciosamente —
+      # justo o tipo de erro "quebra sem avisar" que estamos tentando evitar
+      # (ver README, "Publicando na rede do laboratório"). Este arquivo é
+      # dedicado a esta VM, então trava os três valores direto.
+      #
+      # 192.168.9.34: é o Host que chega aqui de verdade — o waf da DMZ
+      # repassa o cabeçalho Host original do navegador sem alterar (ver
+      # nginx/proxy_params.conf), e o navegador conecta em 192.168.9.34, não
+      # no IP do backend. 192.168.9.50 incluído à parte para acesso direto
+      # (diagnóstico, sem passar pelo waf).
+      DJANGO_ALLOWED_HOSTS: "192.168.9.34,192.168.9.50,localhost,127.0.0.1,backend"
+      # O navegador do usuário final só conhece 192.168.9.34 (a DMZ) — nunca
+      # o IP do backend na rede interna.
+      DJANGO_CORS_ALLOWED_ORIGINS: "https://192.168.9.34"
+      DJANGO_CSRF_TRUSTED_ORIGINS: "https://192.168.9.34"
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-true}
+      # 0 enquanto o certificado for autoassinado/CA interna (ver
+      # docker-compose.dmz.yml) — HSTS com certificado não confiável trava o
+      # "prosseguir mesmo assim" do navegador.
+      DJANGO_SECURE_HSTS_SECONDS: ${DJANGO_SECURE_HSTS_SECONDS:-0}
+      DJANGO_SECRET_KEY_FILE: /run/secrets/django_secret_key
+      POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      # Papel de execução normal do backend: só DML (sem DDL). Ver infra/postgres/init-app-role.sh.
+      POSTGRES_USER: ${POSTGRES_RUNTIME_USER:-lustre_app_runtime}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+      # Papel dono do banco, usado só para `migrate` (precisa de DDL) — ver docker/entrypoint-production.sh.
+      POSTGRES_MIGRATION_USER: ${POSTGRES_USER:-lustre_app}
+      POSTGRES_MIGRATION_PASSWORD_FILE: /run/secrets/postgres_password
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DJANGO_ADMINS: ${DJANGO_ADMINS:-}
+      # Sprint 2: "true" troca o login para OIDC + Keycloak (ver
+      # backend/config/settings/auth.py e docs/authentication.md).
+      ENABLE_OIDC: "false"
+    # Modo host: alcançável em 192.168.9.50:8000 a partir da DMZ via pfSense,
+    # sem passar pela routing mesh do Swarm (que não preserva IP de origem e
+    # adicionaria um salto de LB desnecessário pra um serviço de réplica
+    # única).
+    ports:
+      - target: 8000
+        published: 8000
+        mode: host
+    secrets:
+      - django_secret_key
+      - postgres_password
+      - postgres_runtime_password
+    networks:
+      - application_net
+      - database_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      # /app/staticfiles em tmpfs: collectstatic roda de novo a cada início
+      # (mesma lógica do /tmp) — só precisa de um lugar gravável, sem volume
+      # nem persistir. O waf (outra VM) não lê mais daqui — ver WhiteNoise em
+      # backend/config/settings/base.py. mode 1777 explícito: só o /tmp
+      # ganha isso automaticamente do runtime, outros caminhos em tmpfs não
+      # (nascem root:root 755, e o collectstatic não consegue escrever).
+      - type: tmpfs
+        target: /app/staticfiles
+        tmpfs:
+          mode: 01777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    # Sem porta publicada: acesso só via túnel SSH quando precisar dele como
+    # evidência, não fica exposto em rede nenhuma.
+    networks:
+      - application_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  postgres:
+    image: postgres:17.6-alpine3.22
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
+      POSTGRES_USER: ${POSTGRES_USER:-lustre_app}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro
+    secrets:
+      - postgres_password
+      - postgres_runtime_password
+    networks:
+      - database_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+networks:
+  application_net:
+    driver: overlay
+  database_net:
+    driver: overlay
+    internal: true
+
+volumes:
+  postgres_data:
+
+secrets:
+  # external: true = já criado no Swarm, não um arquivo local (diferente de
+  # docker-compose.prod.yml). Criar uma vez, antes do primeiro deploy:
+  #   docker secret create django_secret_key ./secrets/django_secret_key.txt
+  #   docker secret create postgres_password ./secrets/postgres_password.txt
+  #   docker secret create postgres_runtime_password ./secrets/postgres_runtime_password.txt
+  # (os arquivos de origem podem ser gerados com ./infra/scripts/init-secrets.sh,
+  # igual no perfil local — só a entrega ao container que muda.)
+  django_secret_key:
+    external: true
+  postgres_password:
+    external: true
+  postgres_runtime_password:
+    external: true
