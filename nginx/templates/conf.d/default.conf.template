@@ -34,13 +34,24 @@ map $http_host $host_allowed { # nosemgrep: generic.nginx.security.request-host-
     "${WAF_EXTRA_HOST}" 1;
 }
 
+# Porta do redirecionamento HTTP -> HTTPS. Depende de como o cliente chegou:
+#   - Host COM porta (ex.: localhost:8080 no perfil local, onde o HTTPS é
+#     publicado em 8443): redireciona para :8443.
+#   - Host SEM porta (ex.: 192.168.9.34 na DMZ, onde o host publica 80/443):
+#     redireciona sem porta (443 padrão). Antes o 8443 era fixo e, na DMZ,
+#     mandava o navegador para uma porta que o host não publica.
+map $http_host $https_redirect_port {
+    default     "";
+    "~:[0-9]+$" ":8443";
+}
+
 # Porta 8080: só redireciona para HTTPS. Não serve app nem estático — nenhum
 # dado sensível trafega aqui, então dispensa a allowlist/headers abaixo.
 server {
     listen 8080;
     server_name _;
     server_tokens off;
-    return 301 https://$host:8443$request_uri;
+    return 301 https://$host$https_redirect_port$request_uri;
 }
 
 server {
