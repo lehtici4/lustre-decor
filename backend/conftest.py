@@ -15,3 +15,15 @@ def django_db_modify_db_settings():
     password_file = os.environ["POSTGRES_MIGRATION_PASSWORD_FILE"]
     with open(password_file, encoding="utf-8") as fh:
         settings.DATABASES["default"]["PASSWORD"] = fh.read().strip()
+
+
+@pytest.fixture(autouse=True)
+def _clear_throttle_cache():
+    """O throttling do DRF guarda contadores no cache (LocMem, compartilhado
+    no processo). Sem limpar, os logins de um teste consomem a cota do
+    seguinte — relevante desde que o fluxo com MFA faz vários logins por teste."""
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
