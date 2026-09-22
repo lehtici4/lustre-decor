@@ -3,4 +3,5 @@ export type User = {
   username: string
   email: string
   is_staff: boolean
+  mfa_enabled?: boolean
 }

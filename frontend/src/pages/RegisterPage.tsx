@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { login, register } from '../api/auth'
+import { login, register, type MfaChallenge } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
 import AuthLayout from '../components/AuthLayout'
+import MfaStep from '../components/MfaStep'
+import type { User } from '../types/user'
 
 type PasswordCheck = {
   label: string
@@ -26,6 +28,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [challenge, setChallenge] = useState<MfaChallenge | null>(null)
   const { setUser } = useAuth()
   const navigate = useNavigate()
 
@@ -37,14 +40,44 @@ export default function RegisterPage() {
     setSubmitting(true)
     try {
       await register({ username, email, password })
-      const user = await login({ username, password })
-      setUser(user)
-      navigate('/')
+      // Conta nova: o login devolve o desafio de cadastro do TOTP (MFA obrigatório).
+      const result = await login({ username, password })
+      if (result.kind === 'mfa') {
+        setChallenge(result.challenge)
+        setPassword('')
+      } else {
+        finish(result.user)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível criar a conta.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  function finish(user: User) {
+    setUser(user)
+    navigate('/')
+  }
+
+  if (challenge) {
+    return (
+      <AuthLayout
+        title="Ative a verificação em dois fatores"
+        footer={
+          <>
+            Conta criada. A verificação em dois fatores é obrigatória para entrar — se sair agora, ela
+            será pedida no próximo <Link to="/login">login</Link>.
+          </>
+        }
+      >
+        <MfaStep
+          challenge={challenge}
+          onDone={finish}
+          onRestart={(message) => navigate('/login', { state: { message } })}
+        />
+      </AuthLayout>
+    )
   }
 
   return (

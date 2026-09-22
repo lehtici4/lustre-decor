@@ -5,9 +5,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.core.services import auth_service
+from apps.core.services import auth_service, mfa_service
 
-from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
+from .permissions import IsAuthenticatedWithMfa
+from .serializers import LoginSerializer, MfaVerifySerializer, RegisterSerializer, UserSerializer
 
 
 class CsrfView(APIView):
@@ -45,16 +46,52 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = auth_service.login_user(
+        result = auth_service.login_user(
             request,
             username=serializer.validated_data["username"],
             password=serializer.validated_data["password"],
         )
 
-        if user is None:
+        if result is None:
             return Response({"detail": "Credenciais inválidas."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        return Response(UserSerializer(user).data)
+        if result.mfa_challenge is not None:
+            # Senha correta, falta o segundo fator: nenhuma sessão autenticada
+            # foi criada ainda. O cliente segue para /auth/mfa/verify/.
+            return Response(result.mfa_challenge)
+
+        return Response(UserSerializer(result.user).data)
+
+
+class MfaVerifyView(APIView):
+    """Segunda etapa do login: código TOTP (6 dígitos) ou código de backup."""
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa"
+
+    def post(self, request):
+        serializer = MfaVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            verification = mfa_service.verify_challenge(request, serializer.validated_data["token"])
+        except mfa_service.MfaInvalidToken as exc:
+            return Response(
+                {"detail": "Código inválido.", "attempts_left": exc.attempts_left},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except mfa_service.MfaChallengeError:
+            return Response(
+                {"detail": "Verificação expirada. Entre novamente com usuário e senha.", "restart": True},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        data = UserSerializer(verification.user).data
+        if verification.backup_codes:
+            data["backup_codes"] = verification.backup_codes
+        return Response(data)
 
 
 class LogoutView(APIView):
@@ -66,7 +103,7 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)

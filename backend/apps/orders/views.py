@@ -1,8 +1,8 @@
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.permissions import IsAuthenticatedWithMfa
 from apps.core.services import cart_service, order_service
 from apps.core.services.order_service import EmptyCartError
 
@@ -16,7 +16,7 @@ from .serializers import (
 
 
 class CartView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def get(self, request):
         cart = cart_service.get_or_create_cart(request.user)
@@ -24,7 +24,7 @@ class CartView(APIView):
 
 
 class CartItemListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def post(self, request):
         serializer = AddCartItemSerializer(data=request.data)
@@ -39,7 +39,7 @@ class CartItemListView(APIView):
 
 
 class CartItemDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def patch(self, request, pk):
         item = cart_service.get_owned_item(request.user, pk)
@@ -56,7 +56,7 @@ class CartItemDetailView(APIView):
 
 
 class OrderListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def get(self, request):
         orders = Order.objects.filter(user=request.user).prefetch_related("items")
@@ -72,7 +72,7 @@ class OrderListCreateView(APIView):
 
 
 class OrderDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedWithMfa]
 
     def get(self, request, pk):
         order = order_service.get_owned_order(request.user, pk)

@@ -79,6 +79,15 @@ LOGIN_URL = "two_factor:login"
 LOGIN_REDIRECT_URL = "/admin/"
 OTP_TOTP_ISSUER = "LustreDecor"
 
+# MFA (TOTP) obrigatório no login da loja — ver apps/core/services/mfa_service.py.
+# Sem serviço de e-mail no laboratório, o segundo fator é app autenticador +
+# códigos de backup. MFA_EXEMPT_USERS: nomes de usuário (login) liberados sem
+# MFA — por padrão só a conta de avaliação exigida pelo professor. Para
+# desligar a isenção em uma demonstração pública: MFA_EXEMPT_USERS="" no stack.
+MFA_EXEMPT_USERS = env_list("MFA_EXEMPT_USERS", "teste@pucparana.com")
+MFA_PENDING_TTL = int(os.getenv("MFA_PENDING_TTL", "300"))
+MFA_MAX_ATTEMPTS = int(os.getenv("MFA_MAX_ATTEMPTS", "5"))
+
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
@@ -158,11 +167,11 @@ SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
 
 REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_PERMISSION_CLASSES": ["apps.accounts.permissions.IsAuthenticatedWithMfa"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "EXCEPTION_HANDLER": "apps.core.exceptions.exception_handler",
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
-    "DEFAULT_THROTTLE_RATES": {"login": "5/min"},
+    "DEFAULT_THROTTLE_RATES": {"login": "5/min", "mfa": "10/min"},
 }
 
 LOGGING = {

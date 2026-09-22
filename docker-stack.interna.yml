@@ -57,6 +57,11 @@ services:
       # "prosseguir mesmo assim" do navegador.
       DJANGO_SECURE_HSTS_SECONDS: ${DJANGO_SECURE_HSTS_SECONDS:-0}
       DJANGO_SECRET_KEY_FILE: /run/secrets/django_secret_key
+      # MFA (TOTP) obrigatório no login da loja para todas as contas, exceto
+      # as listadas aqui (nome de usuário). Só a conta de avaliação exigida
+      # pelo professor fica liberada — não há serviço de e-mail no lab, então
+      # a recuperação é por códigos de backup. Ver docs/authentication.md.
+      MFA_EXEMPT_USERS: "teste@pucparana.com"
       POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}

@@ -18,10 +18,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const controller = new AbortController()
 
+    // Ignora a resposta de uma requisição abortada (StrictMode monta o efeito
+    // duas vezes em dev): sem isso o "loading" terminava com user=null e o
+    // RequireAuth mandava para /login antes da segunda chamada responder.
     fetchCurrentUser(controller.signal)
-      .then(setUser)
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false))
+      .then((current) => {
+        if (!controller.signal.aborted) setUser(current)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setUser(null)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
 
     return () => controller.abort()
   }, [])

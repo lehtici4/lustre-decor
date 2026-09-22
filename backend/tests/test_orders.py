@@ -4,6 +4,7 @@ from django.urls import reverse
 
 from apps.catalog.models import Product
 from apps.orders.models import Cart, CartItem, Order
+from tests.helpers import login_with_mfa
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def test_create_order_requires_authentication(client):
 
 
 def test_create_order_fails_with_empty_cart(client, user_a):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
 
     response = client.post(reverse("order-list-create"))
 
@@ -36,7 +37,7 @@ def test_create_order_fails_with_empty_cart(client, user_a):
 
 
 def test_create_order_from_cart_snapshots_items_and_clears_cart(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     cart = Cart.objects.create(user=user_a)
     CartItem.objects.create(cart=cart, product=product, quantity=3)
 
@@ -51,7 +52,7 @@ def test_create_order_from_cart_snapshots_items_and_clears_cart(client, user_a, 
 
 
 def test_order_survives_product_changes(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     cart = Cart.objects.create(user=user_a)
     CartItem.objects.create(cart=cart, product=product, quantity=1)
     client.post(reverse("order-list-create"))
@@ -69,7 +70,7 @@ def test_order_survives_product_changes(client, user_a, product):
 
 def test_list_orders_returns_only_own_orders(client, user_a, user_b, product):
     Order.objects.create(user=user_b, total="10.00")
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     cart = Cart.objects.create(user=user_a)
     CartItem.objects.create(cart=cart, product=product, quantity=1)
     client.post(reverse("order-list-create"))
@@ -82,7 +83,7 @@ def test_list_orders_returns_only_own_orders(client, user_a, user_b, product):
 
 def test_user_cannot_view_another_users_order(client, user_a, user_b):
     order_b = Order.objects.create(user=user_b, total="10.00")
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
 
     response = client.get(reverse("order-detail", args=[order_b.id]))
 
