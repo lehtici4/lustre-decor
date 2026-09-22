@@ -1,0 +1,11 @@
+# Access log do waf lido pelo fail2ban (e pelo agente Wazuh). copytruncate:
+# o Nginx está dentro do container e não recebe o sinal de reabrir o arquivo.
+/var/log/lustre-waf/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

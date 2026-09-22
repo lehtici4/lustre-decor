@@ -12,7 +12,26 @@
 # Rate limiting adicional no login, em complemento ao throttling do DRF
 # (defesa em profundidade — ver docs/security.md).
 limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;
+# Segunda etapa do login (código TOTP / backup). Um pouco mais folgado que o
+# login — o usuário pode errar a digitação — mas ainda inviabiliza força bruta
+# nos 10^6 códigos (o backend também descarta o desafio após 5 erros).
+limit_req_zone $binary_remote_addr zone=mfa_limit:10m rate=10r/m;
 limit_req_status 429;
+
+# Access log dedicado ao Fail2ban (e ao agente Wazuh) — arquivo em
+# /var/log/lustre-waf, montado do host na DMZ (ver docker-compose.dmz.yml e
+# infra/fail2ban/). Campos fixos PRIMEIRO, ancorados pelos filtros:
+#   $remote_addr        IP da conexão TCP (o cliente não forja; na DMZ não há
+#                       proxy na frente — Compose puro, sem routing mesh);
+#   $status             status devolvido ao cliente;
+#   upstream=$upstream_status
+#                       "-" quando a resposta nasceu no próprio waf
+#                       (ModSecurity 403, limit_req 429, estático do SPA) —
+#                       é isso que separa um bloqueio do WAF de um 403 do Django.
+# Tudo que o cliente controla (URI, User-Agent) vem depois, entre aspas, com o
+# escape padrão do Nginx (\x22 para aspas).
+log_format lustre_f2b '$remote_addr [$time_iso8601] $status upstream=$upstream_status '
+                      '"$request_method $uri" rt=$request_time ua="$http_user_agent"';
 
 # Allowlist do cabeçalho Host encaminhado ao backend: nunca repassar o valor
 # enviado pelo cliente sem validar (Host header injection — achado real do
@@ -72,6 +91,14 @@ server {
 
     server_tokens off;
 
+    # access_log no nível do server substitui o herdado do http (o "main" da
+    # imagem base, que vai para o stdout): por isso os dois aqui — arquivo para
+    # o Fail2ban/Wazuh e stdout para o `docker logs` continuar funcionando.
+    # ("combined" é o formato pré-definido do Nginx; o "main" da imagem base
+    # ainda não existe neste ponto da leitura dos conf.d.)
+    access_log /var/log/lustre-waf/access.log lustre_f2b;
+    access_log /var/log/nginx/access.log combined;
+
     root /usr/share/nginx/html;
     index index.html;
 
@@ -114,6 +141,12 @@ server {
     # docker-compose.prod.yml (padrão) e docker-compose.dmz.yml (duas VMs).
     location = /api/v1/auth/login/ {
         limit_req zone=login_limit burst=3 nodelay;
+        proxy_pass http://${BACKEND_UPSTREAM};
+        include /etc/nginx/proxy_params.conf;
+    }
+
+    location = /api/v1/auth/mfa/verify/ {
+        limit_req zone=mfa_limit burst=5 nodelay;
         proxy_pass http://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }

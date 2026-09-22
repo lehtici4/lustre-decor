@@ -17,8 +17,15 @@ FROM owasp/modsecurity-crs:4.28.0-nginx-alpine-202608131208
 # a esta imagem base (mesmo achado do Trivy que já apareceu na imagem do
 # backend — ver docs/security.md, A03). Precisa de root; devolve para o
 # usuário sem privilégios da imagem original logo em seguida.
+# /var/log/lustre-waf: destino do access log lido pelo Fail2ban. Na DMZ é
+# substituído por um bind mount do host (docker-compose.dmz.yml); nos outros
+# perfis fica dentro do container mesmo — o Nginx não sobe se o diretório do
+# access_log não existir.
 USER root
-RUN apk upgrade --no-cache
+RUN apk upgrade --no-cache \
+    && mkdir -p /var/log/lustre-waf \
+    && chown nginx:nginx /var/log/lustre-waf \
+    && chmod 750 /var/log/lustre-waf
 USER nginx
 
 # Substitui só o template do vhost (mantém os templates de ModSecurity/CRS da

@@ -1,0 +1,76 @@
+# Fail2ban — host da DMZ (192.168.9.34). Instalado por
+# infra/scripts/install-fail2ban.sh dmz. Ver docs/deteccao.md.
+#
+# POR QUE AÇÃO NO HOOK "forward":
+# O waf roda em container com porta publicada pelo Docker. O tráfego para
+# 80/443 sofre DNAT e passa pelo hook FORWARD do kernel, não pelo INPUT — um
+# ban comum do fail2ban (hook input) NÃO bloquearia o acesso ao container.
+# Por isso as jails da aplicação usam duas ações nftables:
+#   - hook input   -> bloqueia o IP no próprio host (sshd etc.);
+#   - hook forward -> bloqueia o IP antes das regras do Docker (prioridade -1,
+#     antes da tabela filter do iptables-nft que o Docker usa), para qualquer
+#     container publicado.
+
+[DEFAULT]
+# 127.0.0.1/8 e ::1 sempre; o instalador acrescenta aqui os IPs de
+# administração (FAIL2BAN_IGNOREIP), ex.: o host do Guacamole — banir o
+# próprio acesso de administração derrubaria a sessão de gerenciamento.
+ignoreip = 127.0.0.1/8 ::1 __IGNOREIP__
+
+banaction_docker = nftables[type=allports, protocol="tcp", chain=f2b-forward, chain_hook=forward, name=%(__name__)s-fwd, actname=nft-forward]
+action_lustre = %(banaction_allports)s
+                %(banaction_docker)s
+
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+
+# Senha ou código MFA errados (401 do Django).
+[lustre-auth]
+enabled  = true
+backend  = auto
+filter   = lustre-auth
+logpath  = /var/log/lustre-waf/access.log
+maxretry = 6
+findtime = 10m
+bantime  = 30m
+action   = %(action_lustre)s
+
+# Insistiu depois do 429 (Nginx limit_req ou throttle do DRF).
+[lustre-ratelimit]
+enabled  = true
+backend  = auto
+filter   = lustre-ratelimit
+logpath  = /var/log/lustre-waf/access.log
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+action   = %(action_lustre)s
+
+# Bloqueios do ModSecurity/CRS. Durante a varredura do OWASP ZAP (T07) o IP do
+# Kali seria banido no meio do scan — para esse teste específico, pausar a
+# jail (fail2ban-client stop lustre-waf) e religar em seguida
+# (fail2ban-client reload --restart lustre-waf) — ver docs/deteccao.md.
+[lustre-waf]
+enabled  = true
+backend  = auto
+filter   = lustre-waf
+logpath  = /var/log/lustre-waf/access.log
+maxretry = 10
+findtime = 5m
+bantime  = 1h
+action   = %(action_lustre)s
+
+# Reincidentes: quem foi banido 3x em 1 dia fica fora por 1 semana, em todas
+# as portas (host e containers).
+[recidive]
+enabled  = true
+backend  = auto
+logpath  = /var/log/fail2ban.log
+maxretry = 3
+findtime = 1d
+bantime  = 1w
+action   = %(action_lustre)s
