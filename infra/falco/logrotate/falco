@@ -1,0 +1,9 @@
+/var/log/falco/*.json {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
