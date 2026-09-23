@@ -3,6 +3,8 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.urls import reverse
 
+from tests.helpers import login_with_mfa
+
 
 @pytest.fixture
 def existing_user(db):
@@ -68,7 +70,9 @@ def test_register_rejects_weak_password(client, db):
     assert "password" in response.json()
 
 
-def test_login_succeeds_with_valid_credentials(client, existing_user):
+def test_login_with_valid_credentials_requires_mfa_before_session(client, existing_user):
+    # Senha correta não basta: responde com o desafio de MFA e NÃO cria
+    # sessão autenticada (fluxo completo em tests/test_mfa_login.py).
     response = client.post(
         reverse("auth-login"),
         {"username": "cliente", "password": "uma-senha-forte-123"},
@@ -76,8 +80,8 @@ def test_login_succeeds_with_valid_credentials(client, existing_user):
     )
 
     assert response.status_code == 200
-    assert response.json()["username"] == "cliente"
-    assert "_auth_user_id" in client.session
+    assert response.json()["mfa_required"] is True
+    assert "_auth_user_id" not in client.session
 
 
 def test_login_fails_with_invalid_credentials(client, existing_user):
@@ -139,7 +143,7 @@ def test_me_requires_authentication(client, db):
 
 
 def test_me_returns_current_user(client, existing_user):
-    client.force_login(existing_user)
+    login_with_mfa(client, existing_user)
 
     response = client.get(reverse("auth-me"))
 

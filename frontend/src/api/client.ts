@@ -16,11 +16,13 @@ function flattenFieldErrors(data: unknown): string | null {
 export class ApiError extends Error {
   status: number
   fields?: FieldErrors
+  body?: unknown
 
-  constructor(message: string, status: number, fields?: FieldErrors) {
+  constructor(message: string, status: number, fields?: FieldErrors, body?: unknown) {
     super(message)
     this.status = status
     this.fields = fields
+    this.body = body
   }
 }
 
@@ -48,7 +50,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!response.ok) {
     const message = data?.detail ?? flattenFieldErrors(data) ?? 'Não foi possível completar a operação.'
-    throw new ApiError(message, response.status, isJson ? (data as FieldErrors) : undefined)
+    throw new ApiError(message, response.status, isJson ? (data as FieldErrors) : undefined, data)
   }
 
   return data as T

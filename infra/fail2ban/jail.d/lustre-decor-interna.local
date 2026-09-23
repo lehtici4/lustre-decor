@@ -1,0 +1,26 @@
+# Fail2ban — host interno (192.168.9.50). Instalado por
+# infra/scripts/install-fail2ban.sh interna. Ver docs/deteccao.md.
+#
+# Só SSH: a aplicação não é publicada para fora a partir deste host (o
+# backend só é alcançado pela DMZ via pfSense, e o login é tratado na DMZ).
+# O SSH alcançável a partir da DMZ foi achado no T02 — até a regra do
+# pfSense ser corrigida, o fail2ban é a linha de defesa contra força bruta
+# nessa porta.
+
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 __IGNOREIP__
+
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+
+[recidive]
+enabled  = true
+backend  = auto
+logpath  = /var/log/fail2ban.log
+maxretry = 3
+findtime = 1d
+bantime  = 1w

@@ -1,0 +1,36 @@
+# Falco — configuração do Lustre Decor (sobrepõe /etc/falco/falco.yaml).
+# Instalado em /etc/falco/config.d/ por infra/scripts/install-falco.sh.
+# Ver docs/deteccao.md.
+
+# Driver modern eBPF (CO-RE): não precisa de kernel headers, DKMS nem módulo
+# de kernel; exige kernel >= 5.8 com BTF (Ubuntu 22.04/24.04 atendem). Falco
+# roda no HOST como serviço systemd — nunca em container privilegiado (seria
+# incoerente com o modelo de adversário, que trata T1611 como risco central).
+engine:
+  kind: modern_ebpf
+
+# Só alertas a partir de NOTICE (inclui "Terminal shell in container" da regra
+# padrão e todas as regras LustreDecor). INFORMATIONAL/DEBUG ficam de fora.
+priority: notice
+
+# JSON, uma linha por alerta — formato que o agente Wazuh lê direto
+# (<localfile><log_format>json</log_format>) e decodifica sem regex.
+json_output: true
+json_include_output_property: true
+json_include_tags_property: true
+
+# Arquivo coletado pelo agente Wazuh (etapa 3.5 do plano). keep_alive: abre
+# uma vez e mantém — a rotação usa copytruncate (infra/falco/logrotate/falco).
+file_output:
+  enabled: true
+  keep_alive: true
+  filename: /var/log/falco/falco.json
+
+# Cópia no syslog/journal: continua visível com `journalctl -u falco` mesmo
+# se o arquivo acima for apagado (evidência para o T05).
+syslog_output:
+  enabled: true
+
+# O unit systemd do pacote já descarta o stdout (StandardOutput=null).
+stdout_output:
+  enabled: false

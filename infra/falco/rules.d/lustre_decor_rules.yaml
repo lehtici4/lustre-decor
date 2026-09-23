@@ -1,0 +1,297 @@
+# Regras Falco do Lustre Decor — complementam /etc/falco/falco_rules.yaml
+# (regras estáveis oficiais, que continuam ativas: "Terminal shell in
+# container", "Clear Log Activities", "Read sensitive file untrusted" etc.).
+#
+# Instalado em /etc/falco/rules.d/ por infra/scripts/install-falco.sh.
+# Cada regra aponta o teste do plano (Quadro 7) e as TTPs do Quadro 6.
+# Usa só macros/listas do falco_rules.yaml estável (spawned_process,
+# container, open_read, open_write) ou definidas aqui (prefixo lustre_).
+# Ver docs/deteccao.md — inclui como disparar cada regra de propósito.
+
+# ---------------------------------------------------------------------------
+# Escopo: containers da aplicação
+# ---------------------------------------------------------------------------
+# Swarm (interna): lustre_decor_backend.1.<id>, lustre_decor_postgres.1.<id>
+# Compose (DMZ):   lustre_decor-waf-1
+- macro: lustre_container
+  condition: >
+    (container.name startswith "lustre_decor"
+     or container.image.repository contains "lustre-decor"
+     or container.image.repository contains "lustre_decor")
+
+- list: lustre_shell_binaries
+  items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash, busybox]
+
+# Shells esperados: o próprio entrypoint (PID 1 do container, ou filho do
+# docker-init quando o serviço usa `init: true`), scripts disparados por ele
+# (templates do Nginx, initdb do Postgres) e o healthcheck CMD-SHELL do
+# Postgres. Um `docker exec ... sh` ou um shell aberto pelo gunicorn/nginx
+# (RCE) não tem nenhuma dessas características.
+- macro: lustre_expected_container_shell
+  condition: >
+    (proc.vpid = 1
+     or proc.pname in (docker-init, tini)
+     or proc.cmdline contains "entrypoint"
+     or proc.acmdline contains "entrypoint"
+     or proc.cmdline startswith "sh -c pg_isready")
+
+# ---------------------------------------------------------------------------
+# T10 do doc v4 / T03 — execução interativa dentro de container
+# ---------------------------------------------------------------------------
+- rule: LustreDecor - Shell iniciado em container da aplicacao
+  desc: >
+    Shell executado dentro de um container do Lustre Decor fora do
+    entrypoint/healthcheck — ex.: `docker exec -it <container> sh` ou shell
+    reverso aberto a partir do gunicorn/nginx. Cobre também o caso sem TTY,
+    que a regra padrão "Terminal shell in container" não pega.
+  condition: >
+    spawned_process
+    and container
+    and lustre_container
+    and proc.name in (lustre_shell_binaries)
+    and not lustre_expected_container_shell
+  output: >
+    Shell em container da aplicacao (container=%container.name
+    image=%container.image.repository proc=%proc.name cmd=%proc.cmdline
+    parent=%proc.pname ancestors=%proc.aname user=%user.name
+    tty=%proc.tty host_pid=%proc.pid)
+  priority: WARNING
+  tags: [lustre_decor, container, shell, mitre_execution, T1059, T1609]
+
+# ---------------------------------------------------------------------------
+# T03 — Docker socket / escape para o host
+# ---------------------------------------------------------------------------
+- rule: LustreDecor - Acesso ao Docker socket a partir de container
+  desc: >
+    Processo dentro de container tentou abrir/conectar no Docker socket.
+    Nenhum serviço do Lustre Decor monta o socket — qualquer tentativa (mesmo
+    falha por arquivo inexistente) é indício de tentativa de escape (T1611).
+  condition: >
+    container
+    and evt.type in (open, openat, openat2, connect)
+    and (fd.name contains "docker.sock" or fs.path.name contains "docker.sock")
+  output: >
+    Docker socket acessado de dentro de container (container=%container.name
+    image=%container.image.repository proc=%proc.name cmd=%proc.cmdline
+    evt=%evt.type res=%evt.res path=%fs.path.name fd=%fd.name
+    user=%user.name)
+  priority: CRITICAL
+  tags: [lustre_decor, container, mitre_privilege_escalation, T1611, T1552]
+
+- rule: LustreDecor - Container privilegiado ou montagem sensivel solicitado no host
+  desc: >
+    Comando docker no host pedindo container privilegiado, namespaces do host
+    ou montagem da raiz/socket — o caminho clássico de escape (T1611/T1610).
+  condition: >
+    spawned_process
+    and not container
+    and proc.name in (docker, nerdctl, podman)
+    and (proc.args contains "--privileged"
+         or proc.args contains "--pid=host"
+         or proc.args contains "--pid host"
+         or proc.args contains "--net=host"
+         or proc.args contains "--network=host"
+         or proc.args contains "docker.sock"
+         or proc.args contains "SYS_ADMIN"
+         or proc.args contains " /:/"
+         or proc.args contains "source=/,")
+  output: >
+    Container privilegiado/montagem sensivel solicitado (cmd=%proc.cmdline
+    user=%user.name loginuid=%user.loginuid parent=%proc.pname
+    ancestors=%proc.aname tty=%proc.tty)
+  priority: CRITICAL
+  tags: [lustre_decor, host, mitre_privilege_escalation, T1611, T1610]
+
+- rule: LustreDecor - Container privilegiado iniciado
+  desc: >
+    Um container foi iniciado em modo privilegiado neste host. Nenhum serviço
+    do Lustre Decor precisa disso (o Falco roda no host justamente para evitar
+    container privilegiado).
+  condition: >
+    spawned_process
+    and container
+    and proc.vpid = 1
+    and container.privileged = true
+  output: >
+    Container privilegiado iniciado (container=%container.name
+    image=%container.image.repository:%container.image.tag cmd=%proc.cmdline)
+  priority: CRITICAL
+  tags: [lustre_decor, container, mitre_privilege_escalation, T1611, T1610]
+
+# ---------------------------------------------------------------------------
+# T04 — Docker secrets lidos por processo inesperado
+# ---------------------------------------------------------------------------
+# Leitores legítimos: backend (python/gunicorn), Postgres, Nginx (chave TLS) e
+# os entrypoints na inicialização (file_env do Postgres, init-app-role.sh).
+- list: lustre_secret_readers
+  items: [python, python3, gunicorn, postgres, nginx, docker-entrypoi]
+
+- rule: LustreDecor - Docker secret lido por processo inesperado
+  desc: >
+    Arquivo em /run/secrets aberto para leitura por um processo que não é o
+    serviço dono do segredo (ex.: `cat /run/secrets/...` via docker exec ou
+    shell reverso).
+  condition: >
+    open_read
+    and container
+    and lustre_container
+    and fd.name startswith /run/secrets/
+    and not proc.name in (lustre_secret_readers)
+    and not proc.acmdline contains "entrypoint"
+  output: >
+    Secret lido por processo inesperado (container=%container.name
+    file=%fd.name proc=%proc.name cmd=%proc.cmdline parent=%proc.pname
+    user=%user.name)
+  priority: WARNING
+  tags: [lustre_decor, container, mitre_credential_access, T1552.001]
+
+# ---------------------------------------------------------------------------
+# T05 — evasão: parar sensor / apagar evidência
+# ---------------------------------------------------------------------------
+- macro: lustre_mentions_sensor
+  condition: >
+    (proc.args contains "falco"
+     or proc.args contains "wazuh"
+     or proc.args contains "fail2ban"
+     or proc.args contains "auditd"
+     or proc.args contains "rsyslog"
+     or proc.args contains "journald")
+
+- rule: LustreDecor - Tentativa de parar sensor de seguranca
+  desc: >
+    Comando para parar/desabilitar/matar Falco, agente Wazuh, Fail2ban ou o
+    syslog. Inclui `fail2ban-client stop` (o roteiro do T07 pausa a jail
+    lustre-waf de propósito — esperado aparecer nesse teste).
+  condition: >
+    spawned_process
+    and ((proc.name = systemctl
+          and (proc.args contains "stop" or proc.args contains "disable"
+               or proc.args contains "mask" or proc.args contains "kill")
+          and lustre_mentions_sensor)
+         or (proc.name = service and proc.args contains "stop" and lustre_mentions_sensor)
+         or (proc.name in (kill, pkill, killall) and lustre_mentions_sensor)
+         or (proc.name = fail2ban-client and (proc.args contains "stop" or proc.args contains "unban")))
+  output: >
+    Tentativa de parar sensor de seguranca (cmd=%proc.cmdline user=%user.name
+    loginuid=%user.loginuid parent=%proc.pname ancestors=%proc.aname
+    tty=%proc.tty container=%container.name)
+  priority: CRITICAL
+  tags: [lustre_decor, host, mitre_defense_evasion, T1562.001]
+
+# Logs e evidências monitorados: access log do waf (Fail2ban/Wazuh), saída
+# do Falco, logs do agente Wazuh, fail2ban, auth/syslog e o diretório dos
+# dumps do Postgres (Etapa 5).
+- macro: lustre_protected_path
+  condition: >
+    (fs.path.name startswith /var/log/lustre-waf/
+     or fs.path.name startswith /var/log/falco/
+     or fs.path.name startswith /var/ossec/logs/
+     or fs.path.name startswith /var/log/fail2ban
+     or fs.path.name startswith /var/log/auth.log
+     or fs.path.name startswith /var/log/syslog
+     or fs.path.name startswith /var/backups/lustre-decor/
+     or fs.path.source startswith /var/log/lustre-waf/
+     or fs.path.source startswith /var/log/falco/
+     or fs.path.source startswith /var/ossec/logs/
+     or fs.path.source startswith /var/log/fail2ban
+     or fs.path.source startswith /var/backups/lustre-decor/)
+
+- list: lustre_log_maintainers
+  items: [logrotate, rsyslogd, systemd-journal, fail2ban-server, falco, wazuh-logcollec, wazuh-agentd, wazuh-modulesd, wazuh-syscheckd, dpkg, apt, apt-get, find]
+
+- rule: LustreDecor - Log ou evidencia apagado ou renomeado
+  desc: >
+    Arquivo de log de segurança ou dump do banco apagado/renomeado por
+    processo que não é o rotacionador/serviço dono (T1070.004).
+  condition: >
+    evt.type in (unlink, unlinkat, rename, renameat, renameat2)
+    and lustre_protected_path
+    and not proc.name in (lustre_log_maintainers)
+  output: >
+    Log/evidencia apagado ou renomeado (evt=%evt.type path=%fs.path.name
+    source=%fs.path.source target=%fs.path.target res=%evt.res
+    proc=%proc.name cmd=%proc.cmdline user=%user.name
+    loginuid=%user.loginuid container=%container.name)
+  priority: CRITICAL
+  tags: [lustre_decor, host, filesystem, mitre_defense_evasion, T1070.004]
+
+- rule: LustreDecor - Log de seguranca truncado
+  desc: >
+    Log de segurança aberto com O_TRUNC (ex.: `> /var/log/lustre-waf/access.log`)
+    fora do logrotate. Complementa a regra padrão "Clear Log Activities", que
+    só olha arquivos diretamente em /var/log.
+  condition: >
+    open_write
+    and evt.arg.flags contains "O_TRUNC"
+    and (fd.name startswith /var/log/lustre-waf/
+         or fd.name startswith /var/log/falco/
+         or fd.name startswith /var/ossec/logs/
+         or fd.name startswith /var/log/fail2ban)
+    and not proc.name in (lustre_log_maintainers)
+  output: >
+    Log de seguranca truncado (file=%fd.name proc=%proc.name
+    cmd=%proc.cmdline user=%user.name loginuid=%user.loginuid)
+  priority: CRITICAL
+  tags: [lustre_decor, host, filesystem, mitre_defense_evasion, T1070.004]
+
+# ---------------------------------------------------------------------------
+# T06 — exfiltração
+# ---------------------------------------------------------------------------
+# Toda TENTATIVA de conexão de um container da aplicação para fora das redes
+# privadas — inclusive as que o pfSense bloqueia (resultado ETIMEDOUT /
+# ECONNREFUSED aparece em res=). Nenhum serviço do Lustre Decor precisa de
+# saída para a Internet.
+- rule: LustreDecor - Conexao de saida para fora das redes privadas a partir de container
+  desc: >
+    Container do Lustre Decor tentou conectar em IP público. Registra a
+    tentativa mesmo quando o egress do pfSense bloqueia (T1048/T1567).
+  condition: >
+    evt.type = connect
+    and container
+    and lustre_container
+    and (fd.typechar = 4 or fd.typechar = 6)
+    and fd.ip != "0.0.0.0"
+    and fd.net != "127.0.0.0/8"
+    and not fd.snet in (rfc_1918_addresses)
+  output: >
+    Conexao de saida a partir de container (container=%container.name
+    image=%container.image.repository proc=%proc.name cmd=%proc.cmdline
+    connection=%fd.name res=%evt.res user=%user.name)
+  priority: WARNING
+  tags: [lustre_decor, container, network, mitre_exfiltration, T1048, T1567]
+
+- list: lustre_transfer_tools
+  items: [curl, wget, nc, ncat, netcat, socat, scp, sftp, ftp, rsync, telnet, nmap, ssh]
+
+- rule: LustreDecor - Ferramenta de rede ou transferencia executada em container
+  desc: >
+    curl/wget/nc/socat/scp... dentro de um container da aplicação. A única
+    execução legítima é o curl do healthcheck da imagem do waf.
+  condition: >
+    spawned_process
+    and container
+    and lustre_container
+    and proc.name in (lustre_transfer_tools)
+    and not proc.pname = healthcheck
+    and not proc.aname = healthcheck
+  output: >
+    Ferramenta de rede executada em container (container=%container.name
+    proc=%proc.name cmd=%proc.cmdline parent=%proc.pname user=%user.name)
+  priority: WARNING
+  tags: [lustre_decor, container, network, mitre_exfiltration, mitre_command_and_control, T1105, T1048]
+
+- rule: LustreDecor - Dump do banco lido fora da rotina de backup
+  desc: >
+    Arquivo em /var/backups/lustre-decor (destino do cron de pg_dump) lido
+    por processo que não é o agente Wazuh (FIM). Alvo mais realista do T06:
+    staging do dump antes de enviar para fora (T1074).
+  condition: >
+    open_read
+    and not container
+    and fd.name startswith /var/backups/lustre-decor/
+    and not proc.name in (wazuh-syscheckd, logrotate)
+  output: >
+    Dump do banco lido (file=%fd.name proc=%proc.name cmd=%proc.cmdline
+    user=%user.name loginuid=%user.loginuid parent=%proc.pname)
+  priority: NOTICE
+  tags: [lustre_decor, host, filesystem, mitre_collection, T1074.001]

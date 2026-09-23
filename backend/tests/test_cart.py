@@ -4,6 +4,7 @@ from django.urls import reverse
 
 from apps.catalog.models import Product
 from apps.orders.models import Cart, CartItem
+from tests.helpers import login_with_mfa
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def test_cart_requires_authentication(client, product):
 
 
 def test_add_item_creates_cart_and_item(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
 
     response = client.post(
         reverse("cart-item-list"),
@@ -43,7 +44,7 @@ def test_add_item_creates_cart_and_item(client, user_a, product):
 
 
 def test_add_item_twice_increments_quantity(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     client.post(
         reverse("cart-item-list"),
         {"product_id": product.id, "quantity": 1},
@@ -63,7 +64,7 @@ def test_add_item_twice_increments_quantity(client, user_a, product):
 def test_add_inactive_product_is_rejected(client, user_a, product):
     product.active = False
     product.save()
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
 
     response = client.post(
         reverse("cart-item-list"),
@@ -75,7 +76,7 @@ def test_add_inactive_product_is_rejected(client, user_a, product):
 
 
 def test_update_item_quantity(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     cart = Cart.objects.create(user=user_a)
     item = CartItem.objects.create(cart=cart, product=product, quantity=1)
 
@@ -91,7 +92,7 @@ def test_update_item_quantity(client, user_a, product):
 
 
 def test_remove_item(client, user_a, product):
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     cart = Cart.objects.create(user=user_a)
     item = CartItem.objects.create(cart=cart, product=product, quantity=1)
 
@@ -105,7 +106,7 @@ def test_user_cannot_modify_another_users_cart_item(client, user_a, user_b, prod
     cart_b = Cart.objects.create(user=user_b)
     item_b = CartItem.objects.create(cart=cart_b, product=product, quantity=1)
 
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     response = client.patch(
         reverse("cart-item-detail", args=[item_b.id]),
         {"quantity": 9},
@@ -121,7 +122,7 @@ def test_user_cannot_delete_another_users_cart_item(client, user_a, user_b, prod
     cart_b = Cart.objects.create(user=user_b)
     item_b = CartItem.objects.create(cart=cart_b, product=product, quantity=1)
 
-    client.force_login(user_a)
+    login_with_mfa(client, user_a)
     response = client.delete(reverse("cart-item-detail", args=[item_b.id]))
 
     assert response.status_code == 404

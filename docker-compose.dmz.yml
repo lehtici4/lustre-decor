@@ -35,6 +35,12 @@ services:
       # Sprint 2 (Zero Trust): liga o auth_request do Nginx (ainda comentado
       # em nginx/templates/conf.d/default.conf.template). Ver docs/authentication.md.
       AUTH_REQUEST_ENABLED: "false"
+    volumes:
+      # Access log dedicado lido pelo Fail2ban e pelo agente Wazuh no HOST
+      # (ver infra/fail2ban/ e docs/deteccao.md). O diretório precisa existir
+      # no host com dono = UID do usuário nginx da imagem (101) — o
+      # infra/scripts/install-fail2ban.sh dmz cria com o dono certo.
+      - /var/log/lustre-waf:/var/log/lustre-waf
     networks:
       - application_net
     # Sem read_only aqui: a própria imagem base renderiza a configuração do
