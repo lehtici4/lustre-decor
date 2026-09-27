@@ -4,4 +4,6 @@ export type User = {
   email: string
   is_staff: boolean
   mfa_enabled?: boolean
+  roles?: string[]
+  is_partner?: boolean
 }

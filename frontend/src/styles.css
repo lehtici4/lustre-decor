@@ -393,3 +393,94 @@ h1 {
   cursor: pointer;
   font: inherit;
 }
+
+/* ---- Marketplace / painel do parceiro ---------------------------------- */
+
+.product-store {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #8a7d6f;
+}
+
+.partner-stores {
+  color: #795b3d;
+  margin-top: -0.5rem;
+}
+
+.partner-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  border-bottom: 1px solid #d8cec0;
+}
+
+.partner-tabs button {
+  border: none;
+  background: none;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+
+.partner-tabs button[aria-selected='true'] {
+  border-bottom-color: #795b3d;
+  font-weight: 700;
+}
+
+.partner-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fffdf9;
+}
+
+.partner-table th,
+.partner-table td {
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid #ece4d8;
+}
+
+.partner-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.partner-actions button,
+.partner-form button[type='submit'] {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #795b3d;
+  border-radius: 0.4rem;
+  background: #fffdf9;
+  color: #795b3d;
+  font: inherit;
+  cursor: pointer;
+}
+
+.partner-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 28rem;
+  margin-top: 2rem;
+}
+
+.partner-form input,
+.partner-form textarea,
+.partner-form select {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #d8cec0;
+  border-radius: 0.5rem;
+  font: inherit;
+}
+
+.partner-form button[type='submit'] {
+  margin-top: 0.8rem;
+  background: #795b3d;
+  color: #fffdf9;
+}
+
+.partner-panel [role='alert'] {
+  color: #8a2727;
+}

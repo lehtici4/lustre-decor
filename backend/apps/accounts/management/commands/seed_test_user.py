@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.core.management.base import BaseCommand
 from django_otp import devices_for_user
 
@@ -15,10 +16,14 @@ class Command(BaseCommand):
         )
         user.set_password("Teste@2026")
         user.is_staff = False
+        user.is_superuser = False
         user.is_active = True
         user.save()
 
-        user.groups.clear()
+        # Papel "tester" = mesmos direitos de um cliente, nada além (conta sem
+        # MFA e com senha conhecida: menor privilégio possível).
+        user.groups.set([Group.objects.get_or_create(name=name)[0] for name in ("cliente", "tester")])
+        user.stores.clear()
 
         # Conta de avaliação fica SEM MFA (ver MFA_EXEMPT_USERS em
         # config/settings/base.py): remove qualquer dispositivo OTP que tenha

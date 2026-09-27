@@ -11,6 +11,7 @@ import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
 import MyOrdersPage from './pages/MyOrdersPage'
 import OrderDetailPage from './pages/OrderDetailPage'
+import PartnerPage from './pages/PartnerPage'
 import ProductDetailPage from './pages/ProductDetailPage'
 import RegisterPage from './pages/RegisterPage'
 
@@ -30,6 +31,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="carrinho" element={<CartPage />} />
                 <Route path="pedidos" element={<MyOrdersPage />} />
                 <Route path="pedidos/:id" element={<OrderDetailPage />} />
+                <Route path="parceiro" element={<PartnerPage />} />
               </Route>
             </Route>
           </Routes>

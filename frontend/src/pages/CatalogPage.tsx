@@ -49,6 +49,7 @@ export default function CatalogPage() {
               )}
               <h2>{product.name}</h2>
               <p className="product-price">R$ {product.price}</p>
+              {product.store_name && <p className="product-store">Vendido por {product.store_name}</p>}
             </Link>
           </li>
         ))}

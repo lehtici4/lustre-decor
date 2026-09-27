@@ -10,7 +10,14 @@ logger = logging.getLogger("apps.accounts")
 
 
 def register_user(*, username: str, email: str, password: str) -> User:
+    from django.contrib.auth.models import Group
+
+    from apps.accounts.roles import CLIENTE
+
     user = User.objects.create_user(username=username, email=email, password=password)
+    # Cadastro público gera SEMPRE cliente; parceiro/administrador só por
+    # concessão de um administrador (ver apps/accounts/roles.py).
+    user.groups.add(Group.objects.get_or_create(name=CLIENTE)[0])
     logger.info("user_registered", extra={"user_id": user.id})
     return user
 

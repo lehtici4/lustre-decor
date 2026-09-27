@@ -22,6 +22,7 @@ export default function App() {
         <nav className="app-nav">
           <Link to="/catalogo">Catálogo</Link>
           {user && <Link to="/pedidos">Meus pedidos</Link>}
+          {user?.is_partner && <Link to="/parceiro">Painel do parceiro</Link>}
         </nav>
         {!loading && (
           <div className="auth-nav">

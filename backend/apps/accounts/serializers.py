@@ -39,10 +39,22 @@ class MfaVerifySerializer(serializers.Serializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "is_staff", "mfa_enabled"]
+        fields = ["id", "username", "email", "is_staff", "mfa_enabled", "roles", "is_partner"]
         read_only_fields = fields
 
     mfa_enabled = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
+    is_partner = serializers.SerializerMethodField()
+
+    def get_roles(self, user) -> list[str]:
+        from .roles import user_roles
+
+        return user_roles(user)
+
+    def get_is_partner(self, user) -> bool:
+        from .roles import is_partner
+
+        return is_partner(user)
 
     def get_mfa_enabled(self, user) -> bool:
         from apps.core.services import mfa_service
