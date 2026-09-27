@@ -37,7 +37,22 @@ Papéis implementados como **grupos do Django** (`apps/accounts/roles.py`), cria
 | GET | `order-items/` | itens vendidos pelas lojas do parceiro |
 | PATCH | `order-items/<id>/` | `{"fulfillment_status": "shipped"}` (demais campos são somente leitura) |
 
+| GET, POST | `campaigns/` | listar / criar vitrine (só com produtos da própria loja) |
+| GET, PATCH | `campaigns/<id>/` | editar, publicar/pausar vitrine |
+
 `GET /api/v1/auth/me/` passa a devolver `roles` e `is_partner`.
+
+## Vitrines temáticas (campanhas)
+
+Cada loja pode ter vitrines (`stores.Campaign`): nome, texto, cor de destaque (`#RRGGBB`, validada no backend e no frontend) e uma seleção de produtos **da própria loja** (validado na API do parceiro e no Admin). Não mexem em preço. Aparecem na home e em `/vitrines/<slug>` quando: ativa, loja ativa, dentro do período (`starts_at`/`ends_at`, opcionais) e com ao menos um produto visível. API pública: `GET /api/v1/campaigns/` e `GET /api/v1/campaigns/<slug>/`.
+
+## Dados de demonstração
+
+```bash
+docker exec $(docker ps -qf name=lustre_decor_backend) python manage.py seed_marketplace
+```
+
+Cria (idempotente) 3 lojas — **Ateliê Terra** (cerâmica, vitrine *Cerâmica de Primavera*), **Casa Boho Fibras** (fibras, *Refúgio Boho*) e **Luz & Metal Studio** (iluminação/metais, *Noites Aconchegantes*) — com 5 produtos cada (imagens em `frontend/public/products/marketplace/`) e um usuário parceiro por loja (`parceiro.terra`, `parceiro.boho`, `parceiro.luz`). As senhas são aleatórias e aparecem **só uma vez** no terminal; `--reset-passwords` gera novas. Cada parceiro cadastra o TOTP no primeiro login.
 
 ## Operação (Django Admin, com MFA)
 
@@ -45,4 +60,4 @@ Papéis implementados como **grupos do Django** (`apps/accounts/roles.py`), cria
 - **Tirar o acesso de um parceiro:** remover o usuário da loja, ou desativar a loja.
 - **Criar administrador:** *Usuários* → marcar *Membro da equipe* + grupo `administrador`. Ele cadastra o TOTP no primeiro login da loja (mesmo app autenticador); depois entra no Admin por `/account/login/` com senha + código.
 
-Testes: `backend/tests/test_roles_marketplace.py` (27 casos: atribuição de papéis, travas da conta isenta, isolamento entre lojas, catálogo e despacho).
+Testes: `backend/tests/test_roles_marketplace.py` (papéis, travas da conta isenta, isolamento entre lojas, catálogo e despacho) e `backend/tests/test_campaigns.py` (vitrines e seed).

@@ -7,10 +7,11 @@ import {
   updateFulfillment,
   updatePartnerProduct,
 } from '../api/partner'
+import PartnerCampaigns from '../components/PartnerCampaigns'
 import { useAuth } from '../context/AuthContext'
 import type { PartnerOrderItem, PartnerProduct, PartnerStore } from '../types/partner'
 
-type Tab = 'produtos' | 'pedidos'
+type Tab = 'produtos' | 'pedidos' | 'vitrines'
 
 const EMPTY_FORM = { name: '', description: '', price: '', image_url: '' }
 
@@ -141,11 +142,16 @@ export default function PartnerPage() {
         <button type="button" role="tab" aria-selected={tab === 'pedidos'} onClick={() => setTab('pedidos')}>
           Pedidos {pending > 0 ? `(${pending} a enviar)` : ''}
         </button>
+        <button type="button" role="tab" aria-selected={tab === 'vitrines'} onClick={() => setTab('vitrines')}>
+          Vitrines
+        </button>
       </div>
 
       {error && <p role="alert">{error}</p>}
 
-      {tab === 'produtos' ? (
+      {tab === 'vitrines' ? (
+        <PartnerCampaigns stores={stores} products={products} />
+      ) : tab === 'produtos' ? (
         <>
           <table className="partner-table">
             <thead>

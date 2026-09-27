@@ -4,7 +4,11 @@ from apps.catalog.models import Product
 from apps.core.services import partner_service
 from apps.orders.models import OrderItem
 
-from .models import Store
+from django.utils.text import slugify
+
+from apps.catalog.serializers import ProductSerializer
+
+from .models import Campaign, Store
 
 
 class PartnerStoreSerializer(serializers.ModelSerializer):
@@ -67,3 +71,65 @@ class PartnerOrderItemSerializer(serializers.ModelSerializer):
             "fulfillment_status",
         ]
         read_only_fields = [f for f in fields if f != "fulfillment_status"]
+
+
+class CampaignSummarySerializer(serializers.ModelSerializer):
+    """Vitrine na listagem pública (home)."""
+
+    store_name = serializers.CharField(source="store.name", read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Campaign
+        fields = ["slug", "name", "description", "accent_color", "store_name", "product_count"]
+        read_only_fields = fields
+
+    def get_product_count(self, campaign) -> int:
+        return len(self.context["visible_ids"].get(campaign.pk, []))
+
+
+class CampaignDetailSerializer(CampaignSummarySerializer):
+    products = serializers.SerializerMethodField()
+
+    class Meta(CampaignSummarySerializer.Meta):
+        fields = CampaignSummarySerializer.Meta.fields + ["products"]
+        read_only_fields = fields
+
+    def get_products(self, campaign):
+        return ProductSerializer(self.context["visible_products"], many=True).data
+
+
+class PartnerCampaignSerializer(serializers.ModelSerializer):
+    store = serializers.PrimaryKeyRelatedField(queryset=Store.objects.none())
+    products = serializers.PrimaryKeyRelatedField(many=True, queryset=Product.objects.none(), required=False)
+
+    class Meta:
+        model = Campaign
+        fields = ["id", "store", "name", "slug", "description", "accent_color", "active", "starts_at", "ends_at", "products"]
+        read_only_fields = ["id", "slug"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request is not None:
+            self.fields["store"].queryset = partner_service.partner_stores(request.user)
+            self.fields["products"].child_relation.queryset = partner_service.partner_products(request.user)
+
+    def validate(self, attrs):
+        store = attrs.get("store") or getattr(self.instance, "store", None)
+        products = attrs.get("products")
+        if products is not None and any(p.store_id != store.id for p in products):
+            raise serializers.ValidationError({"products": "Só produtos desta loja entram na vitrine."})
+        starts = attrs.get("starts_at", getattr(self.instance, "starts_at", None))
+        ends = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
+        if starts and ends and ends < starts:
+            raise serializers.ValidationError({"ends_at": "O fim é anterior ao início."})
+        return attrs
+
+    def create(self, validated_data):
+        base = slugify(validated_data["name"])[:60] or "vitrine"
+        slug, n = base, 2
+        while Campaign.objects.filter(slug=slug).exists():
+            slug, n = f"{base}-{n}", n + 1
+        validated_data["slug"] = slug
+        return super().create(validated_data)

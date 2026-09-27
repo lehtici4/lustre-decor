@@ -484,3 +484,77 @@ h1 {
 .partner-panel [role='alert'] {
   color: #8a2727;
 }
+
+/* ---- Vitrines temáticas ------------------------------------------------- */
+
+.campaign-grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+
+.campaign-card {
+  background: #fffdf9;
+  border: 1px solid #e3d9cb;
+  border-top: 6px solid #795b3d;
+  border-radius: 0.75rem;
+}
+
+.campaign-card a {
+  display: block;
+  padding: 1.1rem 1.2rem 1.3rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.campaign-card h3 {
+  margin: 0.2rem 0 0.4rem;
+}
+
+.campaign-card p {
+  margin: 0 0 0.6rem;
+  font-size: 0.92rem;
+}
+
+.campaign-store {
+  font-size: 0.78rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+.campaign-link {
+  font-weight: 700;
+  color: #795b3d;
+  font-size: 0.9rem;
+}
+
+.campaign-hero {
+  border-left: 6px solid #795b3d;
+  padding: 0.3rem 0 0.3rem 1.2rem;
+  margin-bottom: 1.5rem;
+}
+
+.partner-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+}
+
+.partner-checklist label {
+  font-weight: 400;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  vertical-align: middle;
+}

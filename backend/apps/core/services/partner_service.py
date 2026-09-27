@@ -9,6 +9,7 @@ from django.http import Http404
 
 from apps.catalog.models import Product
 from apps.orders.models import OrderItem
+from apps.stores.models import Campaign
 
 logger = logging.getLogger("apps.stores")
 
@@ -53,3 +54,16 @@ def get_owned_order_item(user, pk: int) -> OrderItem:
     if item.store_id is None or not partner_stores(user).filter(pk=item.store_id).exists():
         _forbidden(user, "OrderItem", pk)
     return item
+
+
+def partner_campaigns(user):
+    return Campaign.objects.filter(store__in=partner_stores(user)).select_related("store").prefetch_related("products")
+
+
+def get_owned_campaign(user, pk: int) -> Campaign:
+    campaign = Campaign.objects.filter(pk=pk).select_related("store").first()
+    if campaign is None:
+        raise Http404
+    if not partner_stores(user).filter(pk=campaign.store_id).exists():
+        _forbidden(user, "Campaign", pk)
+    return campaign

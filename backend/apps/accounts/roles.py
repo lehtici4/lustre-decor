@@ -32,7 +32,7 @@ PRIVILEGED_ROLES = (PARCEIRO, ADMINISTRADOR)
 ADMIN_PERMISSIONS = {
     "catalog": {"product": ("view", "add", "change", "delete")},
     "orders": {"order": ("view", "change"), "orderitem": ("view", "change")},
-    "stores": {"store": ("view", "add", "change", "delete")},
+    "stores": {"store": ("view", "add", "change", "delete"), "campaign": ("view", "add", "change", "delete")},
     "auth": {"user": ("view", "change")},
 }
 
