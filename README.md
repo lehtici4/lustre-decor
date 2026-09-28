@@ -190,4 +190,5 @@ Docker Compose Secrets protege a entrega ao container, mas os arquivos de origem
 - [Arquitetura](docs/architecture.md)
 - [Decisões de segurança](docs/security.md)
 - [Autenticação e MFA](docs/authentication.md)
+- [Autorização: papéis e marketplace](docs/authorization.md)
 - [Detecção no host: Fail2ban e Falco](docs/deteccao.md)

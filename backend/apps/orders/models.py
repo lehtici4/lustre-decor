@@ -51,10 +51,29 @@ class Order(models.Model):
 
 
 class OrderItem(models.Model):
+    FULFILLMENT_PENDING = "pending"
+    FULFILLMENT_SHIPPED = "shipped"
+    FULFILLMENT_CHOICES = [
+        (FULFILLMENT_PENDING, "Aguardando envio"),
+        (FULFILLMENT_SHIPPED, "Enviado"),
+    ]
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     product_name = models.CharField(max_length=200)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    # Snapshot da loja no momento da compra (como nome/preço): o parceiro vê
+    # e despacha só os itens da própria loja, mesmo se o produto mudar depois.
+    store = models.ForeignKey(
+        "stores.Store",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="order_items",
+    )
+    fulfillment_status = models.CharField(
+        max_length=20, choices=FULFILLMENT_CHOICES, default=FULFILLMENT_PENDING
+    )
 
     def __str__(self) -> str:
         return f"{self.quantity}x {self.product_name}"

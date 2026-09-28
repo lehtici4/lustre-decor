@@ -5,12 +5,14 @@ import App from './App'
 import RequireAuth from './components/RequireAuth'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
+import CampaignPage from './pages/CampaignPage'
 import CartPage from './pages/CartPage'
 import CatalogPage from './pages/CatalogPage'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
 import MyOrdersPage from './pages/MyOrdersPage'
 import OrderDetailPage from './pages/OrderDetailPage'
+import PartnerPage from './pages/PartnerPage'
 import ProductDetailPage from './pages/ProductDetailPage'
 import RegisterPage from './pages/RegisterPage'
 
@@ -24,12 +26,14 @@ createRoot(document.getElementById('root')!).render(
               <Route index element={<HomePage />} />
               <Route path="catalogo" element={<CatalogPage />} />
               <Route path="produtos/:id" element={<ProductDetailPage />} />
+              <Route path="vitrines/:slug" element={<CampaignPage />} />
               <Route path="login" element={<LoginPage />} />
               <Route path="cadastro" element={<RegisterPage />} />
               <Route element={<RequireAuth />}>
                 <Route path="carrinho" element={<CartPage />} />
                 <Route path="pedidos" element={<MyOrdersPage />} />
                 <Route path="pedidos/:id" element={<OrderDetailPage />} />
+                <Route path="parceiro" element={<PartnerPage />} />
               </Route>
             </Route>
           </Routes>

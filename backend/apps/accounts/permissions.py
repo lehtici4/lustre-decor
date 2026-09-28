@@ -16,3 +16,14 @@ class IsAuthenticatedWithMfa(BasePermission):
 
     def has_permission(self, request, view) -> bool:
         return mfa_service.is_request_verified(request.user)
+
+
+class IsPartner(IsAuthenticatedWithMfa):
+    """Parceiro com loja ativa, sessão verificada por MFA e conta não isenta."""
+
+    message = "Acesso restrito a parceiros."
+
+    def has_permission(self, request, view) -> bool:
+        from .roles import is_partner
+
+        return super().has_permission(request, view) and is_partner(request.user)

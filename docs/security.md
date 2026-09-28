@@ -25,7 +25,7 @@
 
 - Sessões do Django com cookies `HttpOnly` e `SameSite=Lax`; `Secure` habilitado na configuração de produção.
 - CSRF exigido em toda operação autenticada que altera estado (não exigido em cadastro/login, que ocorrem sem sessão prévia).
-- RBAC mínimo: cliente vs. staff/admin (`is_staff`).
+- RBAC com quatro papéis (grupos do Django): cliente, parceiro (loja do marketplace), administrador e tester. Isolamento por loja no backend, ninguém se promove pelo cadastro e conta isenta de MFA nunca exerce papel privilegiado — ver [Autorização](authorization.md).
 - Autorização por objeto: um cliente não acessa carrinho ou pedido de outro usuário, mesmo manipulando IDs — tentativas são negadas com 404 e geram log `forbidden_object_access`.
 - MFA (TOTP) obrigatório para contas de staff/superusuário no Django Admin (`django-otp` + `django-two-factor-auth`).
 - MFA (TOTP) obrigatório também no login da loja para **todas** as contas, com códigos de backup (sem e-mail no laboratório); a sessão só nasce após o segundo fator e a API exige sessão verificada (`IsAuthenticatedWithMfa`). Exceção única: a conta de avaliação `teste@pucparana.com` (`MFA_EXEMPT_USERS`). Ver [Autenticação](authentication.md).

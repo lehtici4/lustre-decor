@@ -1,5 +1,6 @@
 import logging
 
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 
@@ -16,7 +17,9 @@ def get_or_create_cart(user) -> Cart:
 
 def add_item(user, product_id: int, quantity: int) -> Cart:
     cart = get_or_create_cart(user)
-    product = get_object_or_404(Product, id=product_id, active=True)
+    product = get_object_or_404(
+        Product.objects.filter(Q(store__isnull=True) | Q(store__active=True)), id=product_id, active=True
+    )
 
     item, created = CartItem.objects.get_or_create(
         cart=cart, product=product, defaults={"quantity": quantity}

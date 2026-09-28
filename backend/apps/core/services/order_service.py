@@ -29,6 +29,7 @@ def create_order_from_cart(user) -> Order:
                 product_name=item.product.name,
                 unit_price=item.product.price,
                 quantity=item.quantity,
+                store=item.product.store,
             )
             for item in items
         ]
