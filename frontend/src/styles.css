@@ -137,6 +137,63 @@ a {
   cursor: pointer;
 }
 
+.password-field {
+  position: relative;
+  display: flex;
+}
+
+.password-field input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 5.5rem;
+}
+
+/* O Edge tem um botão de revelar nativo; escondido para não duplicar o nosso. */
+.password-field input::-ms-reveal {
+  display: none;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.35rem;
+  transform: translateY(-50%);
+  padding: 0.3rem 0.55rem;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: #795b3d;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  background: #f1e8dc;
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid #795b3d;
+  outline-offset: 1px;
+}
+
+.field-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: #8a7d6f;
+}
+
+.field-error {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: #8a2727;
+}
+
+.auth-card input[aria-invalid='true'] {
+  border-color: #b04a4a;
+}
+
 .auth-card [role='alert'] {
   color: #8a2727;
   text-align: left;

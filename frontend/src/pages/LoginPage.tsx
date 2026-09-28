@@ -4,6 +4,7 @@ import { login, type MfaChallenge } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
 import AuthLayout from '../components/AuthLayout'
 import MfaStep from '../components/MfaStep'
+import PasswordInput from '../components/PasswordInput'
 import type { User } from '../types/user'
 
 export default function LoginPage() {
@@ -85,10 +86,9 @@ export default function LoginPage() {
         />
 
         <label htmlFor="password">Senha</label>
-        <input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           autoComplete="current-password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}

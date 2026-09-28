@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login, register, type MfaChallenge } from '../api/auth'
+import { ApiError } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import AuthLayout from '../components/AuthLayout'
 import MfaStep from '../components/MfaStep'
+import PasswordInput from '../components/PasswordInput'
 import type { User } from '../types/user'
 
 type PasswordCheck = {
@@ -22,21 +24,63 @@ function getPasswordChecks(password: string, username: string): PasswordCheck[] 
   ]
 }
 
+// Mesma regra do validador de username do Django (UnicodeUsernameValidator):
+// letras (inclusive acentuadas), números e @ . + - _ — sem espaços.
+const USERNAME_PATTERN = /^[\p{L}\p{M}\p{N}_.@+-]+$/u
+
+type FieldName = 'username' | 'email' | 'password'
+type RegisterFieldErrors = Partial<Record<FieldName, string>>
+
+const FIELD_NAMES: FieldName[] = ['username', 'email', 'password']
+
+/** Separa os erros de validação do DRF por campo, para exibir cada um embaixo do input certo. */
+function splitApiErrors(err: ApiError): { fields: RegisterFieldErrors; general: string | null } {
+  const fields: RegisterFieldErrors = {}
+  const general: string[] = []
+  for (const [key, value] of Object.entries(err.fields ?? {})) {
+    const messages = Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []
+    if (messages.length === 0) continue
+    if ((FIELD_NAMES as string[]).includes(key)) {
+      fields[key as FieldName] = messages.join(' ')
+    } else {
+      general.push(...messages)
+    }
+  }
+  const hasAny = Object.keys(fields).length > 0 || general.length > 0
+  return { fields, general: general.length > 0 ? general.join(' ') : hasAny ? null : err.message }
+}
+
 export default function RegisterPage() {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<RegisterFieldErrors>({})
   const [submitting, setSubmitting] = useState(false)
   const [challenge, setChallenge] = useState<MfaChallenge | null>(null)
   const { setUser } = useAuth()
   const navigate = useNavigate()
 
   const passwordChecks = getPasswordChecks(password, username)
+  const usernameFormatInvalid = username.length > 0 && !USERNAME_PATTERN.test(username)
+  const usernameError =
+    fieldErrors.username ??
+    (usernameFormatInvalid ? 'Não use espaços. Use só letras, números e @ . + - _' : undefined)
+
+  function clearFieldError(field: FieldName) {
+    setFieldErrors((current) => {
+      if (!current[field]) return current
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setError(null)
+    setFieldErrors({})
+    if (usernameFormatInvalid) return
     setSubmitting(true)
     try {
       await register({ username, email, password })
@@ -49,7 +93,13 @@ export default function RegisterPage() {
         finish(result.user)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível criar a conta.')
+      if (err instanceof ApiError && err.status === 400) {
+        const { fields, general } = splitApiErrors(err)
+        setFieldErrors(fields)
+        setError(general)
+      } else {
+        setError(err instanceof Error ? err.message : 'Não foi possível criar a conta.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -96,9 +146,24 @@ export default function RegisterPage() {
           name="username"
           autoComplete="username"
           value={username}
-          onChange={(event) => setUsername(event.target.value)}
+          onChange={(event) => {
+            setUsername(event.target.value)
+            clearFieldError('username')
+          }}
+          maxLength={150}
+          aria-invalid={usernameError ? true : undefined}
+          aria-describedby={usernameError ? 'username-error' : 'username-hint'}
           required
         />
+        {usernameError ? (
+          <p id="username-error" className="field-error">
+            {usernameError}
+          </p>
+        ) : (
+          <p id="username-hint" className="field-hint">
+            Sem espaços. Letras, números e @ . + - _
+          </p>
+        )}
 
         <label htmlFor="email">E-mail</label>
         <input
@@ -107,21 +172,39 @@ export default function RegisterPage() {
           type="email"
           autoComplete="email"
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => {
+            setEmail(event.target.value)
+            clearFieldError('email')
+          }}
+          aria-invalid={fieldErrors.email ? true : undefined}
+          aria-describedby={fieldErrors.email ? 'email-error' : undefined}
           required
         />
+        {fieldErrors.email && (
+          <p id="email-error" className="field-error">
+            {fieldErrors.email}
+          </p>
+        )}
 
         <label htmlFor="password">Senha</label>
-        <input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           autoComplete="new-password"
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          aria-describedby="password-requirements"
+          onChange={(event) => {
+            setPassword(event.target.value)
+            clearFieldError('password')
+          }}
+          aria-invalid={fieldErrors.password ? true : undefined}
+          aria-describedby={fieldErrors.password ? 'password-error password-requirements' : 'password-requirements'}
           required
         />
+        {fieldErrors.password && (
+          <p id="password-error" className="field-error">
+            {fieldErrors.password}
+          </p>
+        )}
 
         <ul id="password-requirements" className="password-checklist">
           {passwordChecks.map((check) => (
