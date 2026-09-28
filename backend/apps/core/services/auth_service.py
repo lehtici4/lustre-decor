@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 
+from apps.core.net import client_ip
 from apps.core.services import mfa_service
 
 logger = logging.getLogger("apps.accounts")
@@ -34,7 +35,7 @@ def login_user(request, *, username: str, password: str) -> LoginResult | None:
     user = authenticate(request, username=username, password=password)
 
     if user is None:
-        logger.warning("login_failed", extra={"origin": request.META.get("REMOTE_ADDR")})
+        logger.warning("login_failed", extra={"origin": client_ip(request)})
         return None
 
     if not mfa_service.is_exempt(user):

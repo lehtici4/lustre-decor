@@ -182,6 +182,11 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "apps.core.exceptions.exception_handler",
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"login": "5/min", "mfa": "10/min"},
+    # Um proxy confiável na frente (o waf, único cliente aceito pelo mTLS): o
+    # IP do cliente é o último item do X-Forwarded-For. Sem isso o DRF usava
+    # o cabeçalho inteiro como identidade, e variar o X-Forwarded-For a cada
+    # tentativa burlava o throttling de login. Ver apps/core/net.py.
+    "NUM_PROXIES": 1,
 }
 
 LOGGING = {

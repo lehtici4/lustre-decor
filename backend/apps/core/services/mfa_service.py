@@ -38,6 +38,8 @@ from django_otp import match_token
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
+from apps.core.net import client_ip
+
 logger = logging.getLogger("apps.accounts")
 
 PENDING_SESSION_KEY = "mfa_pending"
@@ -172,7 +174,7 @@ def verify_challenge(request, token: str) -> MfaVerification:
         attempts_left = settings.MFA_MAX_ATTEMPTS - pending["attempts"]
         logger.warning(
             "mfa_failed",
-            extra={"user_id": user.pk, "origin": request.META.get("REMOTE_ADDR"), "stage": pending["stage"]},
+            extra={"user_id": user.pk, "origin": client_ip(request), "stage": pending["stage"]},
         )
         if attempts_left <= 0:
             request.session.pop(PENDING_SESSION_KEY, None)
