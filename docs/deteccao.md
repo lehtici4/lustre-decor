@@ -22,9 +22,10 @@ Tirar snapshot das VMs antes (Etapa 5.2). Na raiz do repositório atualizado
 ### DMZ (.34)
 
 ```bash
-# 1) Fail2ban. FAIL2BAN_IGNOREIP = IP(s) de onde vocês administram a VM
-#    (ex.: servidor do Guacamole) — nunca banir o próprio acesso.
-sudo FAIL2BAN_IGNOREIP="<ip-do-guacamole>" ./infra/scripts/install-fail2ban.sh dmz
+# 1) Fail2ban. FAIL2BAN_IGNOREIP = servidor do Guacamole (xrdp vem de
+#    10.96.43.36 — conferido com `sudo ss -tnp state established`).
+#    As próprias VMs (.34/.50) já estão no ignoreip do arquivo da jail.
+sudo FAIL2BAN_IGNOREIP="10.96.43.36" ./infra/scripts/install-fail2ban.sh dmz
 
 # 2) Recriar o waf: nova imagem (log dedicado + limit_req do MFA) e o bind
 #    mount /var/log/lustre-waf
@@ -38,7 +39,7 @@ sudo ./infra/scripts/install-falco.sh
 ### Interna (.50)
 
 ```bash
-sudo FAIL2BAN_IGNOREIP="<ip-do-guacamole>" ./infra/scripts/install-fail2ban.sh interna
+sudo FAIL2BAN_IGNOREIP="10.96.43.36" ./infra/scripts/install-fail2ban.sh interna
 sudo ./infra/scripts/install-falco.sh
 
 # Backend com MFA: nova imagem (GHCR) + variável MFA_EXEMPT_USERS no stack

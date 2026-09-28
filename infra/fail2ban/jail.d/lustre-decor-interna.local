@@ -8,7 +8,11 @@
 # nessa porta.
 
 [DEFAULT]
-ignoreip = 127.0.0.1/8 ::1 __IGNOREIP__
+# A .34 (DMZ) NÃO entra aqui de propósito: força bruta de SSH vinda da DMZ é
+# justamente o cenário do T02 e deve ser banida. Por isso os bans desta VM
+# valem SÓ para a porta 22 (ver recidive abaixo) — um ban em todas as portas
+# cortaria o tráfego legítimo waf (.34) -> backend (.50:8000).
+ignoreip = 127.0.0.1/8 ::1 192.168.9.50 __IGNOREIP__
 
 [sshd]
 enabled  = true
@@ -20,6 +24,9 @@ bantime  = 1h
 [recidive]
 enabled  = true
 backend  = auto
+# Só SSH (o padrão do recidive bloqueia todas as portas — ver comentário do ignoreip).
+banaction = nftables[type=multiport]
+port     = ssh
 logpath  = /var/log/fail2ban.log
 maxretry = 3
 findtime = 1d

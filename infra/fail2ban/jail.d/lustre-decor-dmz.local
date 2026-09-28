@@ -12,10 +12,17 @@
 #     container publicado.
 
 [DEFAULT]
-# 127.0.0.1/8 e ::1 sempre; o instalador acrescenta aqui os IPs de
-# administração (FAIL2BAN_IGNOREIP), ex.: o host do Guacamole — banir o
-# próprio acesso de administração derrubaria a sessão de gerenciamento.
-ignoreip = 127.0.0.1/8 ::1 __IGNOREIP__
+# Nunca banir:
+# - 127.0.0.1/8 e ::1;
+# - 192.168.9.34 (a própria DMZ: o navegador aberto dentro da VM pelo
+#   Guacamole acessa a loja com esse IP de origem);
+# - 192.168.9.50 (backend): o ban vale para TODO pacote vindo do IP no hook
+#   input, inclusive as RESPOSTAS do backend ao proxy do waf — banir a .50
+#   derrubaria a loja inteira (ex.: alguém testando login com curl na .50);
+# - os IPs de administração passados pelo instalador (FAIL2BAN_IGNOREIP),
+#   ex.: o servidor do Guacamole (xrdp vem de 10.96.43.36).
+# Testes de força bruta (T08) devem partir do Kali, não de dentro das VMs.
+ignoreip = 127.0.0.1/8 ::1 192.168.9.34 192.168.9.50 __IGNOREIP__
 
 banaction_docker = nftables[type=allports, protocol="tcp", chain=f2b-forward, chain_hook=forward, name=%(__name__)s-fwd, actname=nft-forward]
 action_lustre = %(banaction_allports)s
