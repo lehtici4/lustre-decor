@@ -3,7 +3,9 @@ name: ${COMPOSE_PROJECT_NAME:-lustre_decor}
 # Perfil "produção local": um único container (Nginx + ModSecurity + OWASP
 # CRS, imagem owasp/modsecurity-crs:nginx) serve o frontend compilado, termina
 # TLS (certificado autoassinado — ver README, "TLS local") e faz proxy para o
-# backend via Gunicorn, com um WAF na frente de toda requisição.
+# backend via Gunicorn, com um WAF na frente de toda requisição. Os saltos
+# internos também são TLS: waf -> backend com mTLS e backend -> Postgres com
+# verify-full (CA interna — infra/scripts/generate-internal-pki.sh).
 #
 # Uso: docker compose -f docker-compose.prod.yml up --build
 
@@ -21,6 +23,9 @@ services:
     secrets:
       - tls_cert
       - tls_key
+      - internal_ca_cert
+      - backend_client_cert
+      - backend_client_key
     environment:
       # Nível de paranoia do CRS (1-4): quanto mais alto, mais regras
       # entram em ação e maior a chance de falso positivo. 1 é o padrão
@@ -94,10 +99,20 @@ services:
       # DJANGO_ADMINS vazio por padrão: sem isso configurado no seu .env,
       # os alertas simplesmente não são enviados (não quebra nada).
       DJANGO_ADMINS: ${DJANGO_ADMINS:-}
+      # TLS obrigatório nos saltos internos (mTLS waf -> backend; backend ->
+      # Postgres com verify-full). Ver infra/scripts/generate-internal-pki.sh.
+      BACKEND_TLS_CERT_FILE: /run/secrets/backend_tls_cert
+      BACKEND_TLS_KEY_FILE: /run/secrets/backend_tls_key
+      BACKEND_TLS_CA_FILE: /run/secrets/internal_ca_cert
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/secrets/internal_ca_cert
     secrets:
       - django_secret_key
       - postgres_password
       - postgres_runtime_password
+      - internal_ca_cert
+      - backend_tls_cert
+      - backend_tls_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,7 +141,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/', timeout=2)"]
+      test: ["CMD", "python", "docker/healthcheck.py"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -154,12 +169,19 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
       POSTGRES_USER: ${POSTGRES_USER:-lustre_app}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    # TLS obrigatório: o wrapper prepara certificado/chave com as permissões
+    # que o Postgres exige e liga ssl + pg_hba.conf só-hostssl.
+    entrypoint: ["sh", "/usr/local/bin/entrypoint-tls.sh"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro
+      - ./infra/postgres/entrypoint-tls.sh:/usr/local/bin/entrypoint-tls.sh:ro
+      - ./infra/postgres/pg_hba.conf:/etc/lustre-postgres/pg_hba.conf:ro
     secrets:
       - postgres_password
       - postgres_runtime_password
+      - postgres_tls_cert
+      - postgres_tls_key
     networks:
       - database_net
     security_opt:
@@ -201,3 +223,22 @@ secrets:
     file: ./secrets/tls/localhost.crt
   tls_key:
     file: ./secrets/tls/localhost.key
+  # CA interna e certificados dos saltos internos:
+  #   ./infra/scripts/generate-internal-pki.sh   (Git Bash no Windows)
+  # Em host Linux, o Compose monta estes arquivos com o dono/permissão do
+  # host: backend.key precisa ser legível pelo UID 10001 e waf-client.key
+  # pelo UID 101 (no Docker Desktop do Windows isso não se aplica).
+  internal_ca_cert:
+    file: ./secrets/pki/ca.crt
+  backend_tls_cert:
+    file: ./secrets/pki/backend.crt
+  backend_tls_key:
+    file: ./secrets/pki/backend.key
+  backend_client_cert:
+    file: ./secrets/pki/waf-client.crt
+  backend_client_key:
+    file: ./secrets/pki/waf-client.key
+  postgres_tls_cert:
+    file: ./secrets/pki/postgres.crt
+  postgres_tls_key:
+    file: ./secrets/pki/postgres.key

@@ -1,5 +1,5 @@
 # Perfil "interna" (rede interna, VM 192.168.9.50 — ep138-pucpr): backend +
-# postgres + mailpit, formato Swarm (docker stack deploy) — não
+# postgres, formato Swarm (docker stack deploy) — não
 # docker compose. Contraparte de docker-compose.dmz.yml, que roda o waf
 # sozinho na VM da DMZ (192.168.9.34 — ep137-pucpr).
 #
@@ -17,20 +17,20 @@
 #     comentário no bloco `secrets:` no fim deste arquivo.
 #
 # Uso (na VM interna, depois de `docker swarm init` e dos `docker secret
-# create` abaixo):
-#   docker pull ghcr.io/lehtici4/lustre-decor-backend:latest
-#   docker stack deploy -c docker-stack.interna.yml lustre_decor
+# create` listados no fim deste arquivo):
+#   docker pull ghcr.io/lehtici4/lustre-decor-backend:<tag abaixo>
+#   docker stack deploy --with-registry-auth -c docker-stack.interna.yml lustre_decor
 #
-# Validado só localmente via `docker compose -f docker-stack.interna.yml
-# config` (sintaxe/schema) — não foi testado contra um Swarm de verdade
-# nesta sessão. Antes do deploy real, vale conferir com `docker service ps`
-# e `docker service inspect` se cap_drop/read_only/security_opt/init foram
-# realmente aplicados (o suporte a esses campos em Swarm já variou entre
-# versões do Docker Engine).
+# TLS em todos os saltos: o waf da DMZ fala com o backend em HTTPS com
+# autenticação mútua (mTLS), e o backend fala com o Postgres em TLS com
+# verify-full. Certificados da CA interna: infra/scripts/generate-internal-pki.sh.
+#
+# Tag versionada, nunca `latest`: o deploy precisa ser reprodutível e ter um
+# ponto de rollback conhecido (tag anterior: etapa2; antes dela: pre-etapa2).
 
 services:
   backend:
-    image: ghcr.io/lehtici4/lustre-decor-backend:latest
+    image: ghcr.io/lehtici4/lustre-decor-backend:etapa2-tls
     init: true
     environment:
       APP_ENV: production
@@ -76,7 +76,16 @@ services:
       # Sprint 2: "true" troca o login para OIDC + Keycloak (ver
       # backend/config/settings/auth.py e docs/authentication.md).
       ENABLE_OIDC: "false"
-    # Modo host: alcançável em 192.168.9.50:8000 a partir da DMZ via pfSense,
+      # HTTPS com mTLS no Gunicorn (docker/gunicorn.conf.py): só aceita
+      # cliente com certificado da CA interna — o waf da DMZ.
+      BACKEND_TLS_CERT_FILE: /run/secrets/backend_tls_cert
+      BACKEND_TLS_KEY_FILE: /run/secrets/backend_tls_key
+      BACKEND_TLS_CA_FILE: /run/secrets/internal_ca_cert
+      # Postgres em TLS validando certificado e nome "postgres" (SAN).
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/secrets/internal_ca_cert
+    # Modo host: alcançável em 192.168.9.50:8000 a partir da DMZ via pfSense
+    # (em HTTPS com mTLS — sem o certificado do waf, a conexão é recusada),
     # sem passar pela routing mesh do Swarm (que não preserva IP de origem e
     # adicionaria um salto de LB desnecessário pra um serviço de réplica
     # única).
@@ -88,6 +97,15 @@ services:
       - django_secret_key
       - postgres_password
       - postgres_runtime_password
+      - internal_ca_cert
+      - backend_tls_cert
+      # Chave privada: só o usuário do backend (10001) lê. O Swarm aplica
+      # uid/gid/mode nos secrets (o Compose, não).
+      - source: backend_tls_key
+        target: backend_tls_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
     networks:
       - application_net
       - database_net
@@ -112,34 +130,23 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/', timeout=2)"]
+      # HTTPS + certificado de cliente (mTLS) — ver backend/docker/healthcheck.py.
+      test: ["CMD", "python", "docker/healthcheck.py"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 20s
     deploy:
       restart_policy:
-        condition: on-failure
-
-  mailpit:
-    image: axllent/mailpit:v1.31.1
-    # Sem porta publicada: acesso só via túnel SSH quando precisar dele como
-    # evidência, não fica exposto em rede nenhuma.
-    networks:
-      - application_net
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    deploy:
-      restart_policy:
-        condition: on-failure
+        # any (não on-failure): container que para "limpo" (exit 0) — como
+        # na atualização do docker-ce de 22/09 — também é religado.
+        condition: any
 
   postgres:
     image: postgres:17.6-alpine3.22
+    # TLS obrigatório: o wrapper prepara certificado/chave com as permissões
+    # que o Postgres exige e liga ssl + pg_hba.conf só-hostssl.
+    entrypoint: ["sh", "/usr/local/bin/entrypoint-tls.sh"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-lustre_decor}
       POSTGRES_USER: ${POSTGRES_USER:-lustre_app}
@@ -147,9 +154,15 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro
+      - ./infra/postgres/entrypoint-tls.sh:/usr/local/bin/entrypoint-tls.sh:ro
+      - ./infra/postgres/pg_hba.conf:/etc/lustre-postgres/pg_hba.conf:ro
     secrets:
       - postgres_password
       - postgres_runtime_password
+      - postgres_tls_cert
+      - source: postgres_tls_key
+        target: postgres_tls_key
+        mode: 0400
     networks:
       - database_net
     security_opt:
@@ -170,7 +183,9 @@ services:
       start_period: 10s
     deploy:
       restart_policy:
-        condition: on-failure
+        # any (não on-failure): container que para "limpo" (exit 0) — como
+        # na atualização do docker-ce de 22/09 — também é religado.
+        condition: any
 
 networks:
   application_net:
@@ -192,9 +207,28 @@ secrets:
   #   docker secret create postgres_runtime_password ./secrets/postgres_runtime_password.txt
   # (os arquivos de origem podem ser gerados com ./infra/scripts/init-secrets.sh,
   # igual no perfil local — só a entrega ao container que muda.)
+  #
+  # TLS interno (gerados por ./infra/scripts/generate-internal-pki.sh):
+  #   docker secret create internal_ca_cert  ./secrets/pki/ca.crt
+  #   docker secret create backend_tls_cert  ./secrets/pki/backend.crt
+  #   docker secret create backend_tls_key   ./secrets/pki/backend.key
+  #   docker secret create postgres_tls_cert ./secrets/pki/postgres.crt
+  #   docker secret create postgres_tls_key  ./secrets/pki/postgres.key
+  # Secrets do Swarm são imutáveis: para renovar, criar com nome novo (ex.:
+  # backend_tls_cert_v2) e trocar a referência aqui.
   django_secret_key:
     external: true
   postgres_password:
     external: true
   postgres_runtime_password:
+    external: true
+  internal_ca_cert:
+    external: true
+  backend_tls_cert:
+    external: true
+  backend_tls_key:
+    external: true
+  postgres_tls_cert:
+    external: true
+  postgres_tls_key:
     external: true

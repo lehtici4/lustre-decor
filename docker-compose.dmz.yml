@@ -24,17 +24,24 @@ services:
     secrets:
       - tls_cert
       - tls_key
+      # mTLS até o backend (ver "Salto waf -> backend" no template do Nginx).
+      - internal_ca_cert
+      - backend_client_cert
+      - backend_client_key
     environment:
       BLOCKING_PARANOIA: ${WAF_PARANOIA:-1}
       # Sem porta: 443 é a porta padrão HTTPS, o navegador não a inclui no
       # cabeçalho Host — ver nginx/templates/conf.d/default.conf.template.
       WAF_EXTRA_HOST: "192.168.9.34"
       # IP real do backend na rede interna, alcançado via pfSense (DMZ ->
-      # interna, porta 8000 liberada). Ver docker-stack.interna.yml.
+      # interna, porta 8000 liberada). Conexão em HTTPS com mTLS — ver
+      # docker-stack.interna.yml e backend/docker/gunicorn.conf.py.
       BACKEND_UPSTREAM: "192.168.9.50:8000"
-      # Sprint 2 (Zero Trust): liga o auth_request do Nginx (ainda comentado
-      # em nginx/templates/conf.d/default.conf.template). Ver docs/authentication.md.
-      AUTH_REQUEST_ENABLED: "false"
+      # Sprint 2 (Zero Trust): reservado para ligar o auth_request do Nginx.
+      # Hoje NENHUM arquivo lê esta variável (o bloco no template está
+      # comentado), então fica comentada também para não sugerir um controle
+      # que não existe. Ver docs/authentication.md.
+      # AUTH_REQUEST_ENABLED: "false"
     volumes:
       # Access log dedicado lido pelo Fail2ban e pelo agente Wazuh no HOST
       # (ver infra/fail2ban/ e docs/deteccao.md). O diretório precisa existir
@@ -72,3 +79,14 @@ secrets:
     file: ./secrets/tls/dmz.crt
   tls_key:
     file: ./secrets/tls/dmz.key
+  # CA interna + identidade do waf perante o backend. Gerados na VM interna
+  # por infra/scripts/generate-internal-pki.sh e trazidos para cá (só estes
+  # três — nunca a ca.key). A chave precisa ter dono = UID do nginx da imagem
+  # (101), igual ao dmz.key: em Compose o bind mount do secret mantém dono e
+  # permissão do host.
+  internal_ca_cert:
+    file: ./secrets/pki/ca.crt
+  backend_client_cert:
+    file: ./secrets/pki/waf-client.crt
+  backend_client_key:
+    file: ./secrets/pki/waf-client.key

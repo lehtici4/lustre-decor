@@ -42,6 +42,8 @@ fi
 docker exec "$CID" sh -c '
   set -eu
   export PGPASSWORD="$(cat /run/secrets/postgres_password)"
+  # O pg_hba.conf só aceita TCP com TLS (infra/postgres/pg_hba.conf).
+  export PGSSLMODE=require
   exec pg_dump -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom
 ' > "$DUMP_FILE"
 

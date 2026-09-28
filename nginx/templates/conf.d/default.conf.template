@@ -121,6 +121,26 @@ server {
     # assim" no aviso de certificado, travando o acesso local. Cabe ativar
     # quando houver um certificado de CA confiável (ver nota acima).
 
+    # Salto waf -> backend também em TLS, com autenticação MÚTUA (mTLS):
+    #   - o waf valida o certificado do backend contra a CA interna e pelo
+    #     NOME backend.lustre.internal (está no SAN do backend.crt). Nome, não
+    #     IP: a checagem de nome do Nginx não casa entradas IP do SAN. A
+    #     conexão continua indo para ${BACKEND_UPSTREAM}; o nome só é usado na
+    #     verificação.
+    #   - o waf se apresenta com waf-client.crt; o Gunicorn recusa qualquer
+    #     cliente sem certificado da CA interna (backend/docker/gunicorn.conf.py).
+    # Certificados: infra/scripts/generate-internal-pki.sh. Herdado por todos
+    # os proxy_pass abaixo.
+    proxy_ssl_certificate         /run/secrets/backend_client_cert;
+    proxy_ssl_certificate_key     /run/secrets/backend_client_key;
+    proxy_ssl_trusted_certificate /run/secrets/internal_ca_cert;
+    proxy_ssl_verify              on;
+    proxy_ssl_verify_depth        1;
+    proxy_ssl_name                backend.lustre.internal;
+    proxy_ssl_server_name         on;
+    proxy_ssl_protocols           TLSv1.2 TLSv1.3;
+    proxy_ssl_session_reuse       on;
+
     # /healthz (healthcheck do container) e /metrics/nginx (stub_status,
     # restrito por IP) vêm da própria imagem base — ver
     # includes/location_common.conf.template.
@@ -131,7 +151,7 @@ server {
     # funciona igual com o waf e o backend no mesmo host ou em VMs
     # separadas (ver docker-compose.dmz.yml). Ver backend/config/settings/base.py.
     location /static/ {
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 
@@ -141,23 +161,23 @@ server {
     # docker-compose.prod.yml (padrão) e docker-compose.dmz.yml (duas VMs).
     location = /api/v1/auth/login/ {
         limit_req zone=login_limit burst=3 nodelay;
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 
     location = /api/v1/auth/mfa/verify/ {
         limit_req zone=mfa_limit burst=5 nodelay;
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 
     location /api/ {
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 
     location /admin/ {
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 
@@ -166,14 +186,14 @@ server {
     # que está abaixo ele aprovaria qualquer requisição.
     # location /api/admin/ {
     #   auth_request /auth;
-    #   proxy_pass http://backend:8000;
+    #   proxy_pass https://${BACKEND_UPSTREAM};
     # }
     # location = /auth {
     #   return 200;
     # }
 
     location /account/ {
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass https://${BACKEND_UPSTREAM};
         include /etc/nginx/proxy_params.conf;
     }
 

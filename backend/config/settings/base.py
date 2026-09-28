@@ -116,9 +116,18 @@ DATABASES = {
         "HOST": os.getenv("POSTGRES_HOST", "postgres"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
         "CONN_MAX_AGE": 60,
-        "OPTIONS": {"connect_timeout": 5},
+        "OPTIONS": {
+            "connect_timeout": 5,
+            # "prefer" só no desenvolvimento local (Postgres do docker-compose.yml
+            # sem TLS). Produção sobrescreve para verify-full — ver production.py.
+            "sslmode": os.getenv("POSTGRES_SSLMODE", "prefer"),
+        },
     }
 }
+# CA que assinou o certificado do Postgres (secret internal_ca_cert). Sem ela o
+# verify-full não tem contra o que validar e a conexão falha (fail-closed).
+if os.getenv("POSTGRES_SSLROOTCERT"):
+    DATABASES["default"]["OPTIONS"]["sslrootcert"] = os.environ["POSTGRES_SSLROOTCERT"]
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

@@ -77,9 +77,10 @@ Para os alertas saírem de fato, defina `DJANGO_ADMINS` no seu `.env` (formato `
 
 ## Perfil de produção local (Nginx + ModSecurity/OWASP CRS + Gunicorn + TLS)
 
-O dia a dia de desenvolvimento usa o Vite (hot-reload, sem TLS). Para rodar mais perto do desenho final — um único container (`waf`) servindo o frontend compilado, terminando TLS, fazendo proxy reverso e filtrando toda requisição por um WAF (ModSecurity + OWASP Core Rule Set), mais o backend via Gunicorn, sem o servidor de desenvolvimento do Django:
+O dia a dia de desenvolvimento usa o Vite (hot-reload, sem TLS). Para rodar mais perto do desenho final — um único container (`waf`) servindo o frontend compilado, terminando TLS, fazendo proxy reverso e filtrando toda requisição por um WAF (ModSecurity + OWASP Core Rule Set), mais o backend via Gunicorn, sem o servidor de desenvolvimento do Django — gere antes a CA interna (TLS nos saltos internos, ver "TLS interno" abaixo) e suba:
 
-```powershell
+```bash
+./infra/scripts/generate-internal-pki.sh     # Git Bash no Windows
 docker compose -f docker-compose.prod.yml up --build
 ```
 
@@ -105,6 +106,19 @@ Os arquivos ficam em `secrets/tls/` (fora do Git, como os demais segredos). **To
 
 Decisão do laboratório (sem domínio público, então nem Let's Encrypt nem qualquer outra CA pública servem): certificado **autoassinado ou emitido por uma CA interna** do laboratório, sempre com o IP real no SAN. Se a equipe já tiver uma CA interna própria, é só substituir `secrets/tls/localhost.{crt,key}` pelo par emitido por ela — a aplicação não distingue a origem do certificado, só exige que o SAN bata com o endereço acessado.
 
+### TLS interno (waf → backend → PostgreSQL)
+
+TLS não termina na borda: o `waf` fala com o backend em HTTPS com **autenticação mútua** (mTLS) e o backend fala com o PostgreSQL em TLS com `verify-full`. Os certificados vêm de uma CA própria do laboratório:
+
+```bash
+./infra/scripts/generate-internal-pki.sh            # cria só o que falta
+./infra/scripts/generate-internal-pki.sh --force    # recria tudo (CA nova)
+```
+
+Gera em `secrets/pki/`: `ca.crt`/`ca.key` (CA), `backend.crt` (servidor do Gunicorn, SAN `backend.lustre.internal`, `backend`, `localhost`, `127.0.0.1`, `192.168.9.50`), `waf-client.crt` (identidade do `waf` perante o backend) e `postgres.crt` (SAN `postgres`). A `ca.key` só serve para emitir — guarde fora dos servidores.
+
+Sem esses arquivos o backend **não sobe** e o Django não conecta ao banco (fail-closed): não existe modo de cair silenciosamente para HTTP ou para Postgres sem TLS. Em host Linux com Compose (não Swarm), os secrets de arquivo mantêm dono/permissão do host — `backend.key` precisa ser legível pelo UID 10001 e `waf-client.key` pelo UID 101.
+
 ## Publicando na rede do laboratório
 
 Por padrão tudo aqui só escuta em `127.0.0.1` — de propósito, pra não expor nada sem querer enquanto se desenvolve. Pra publicar o perfil de produção local na VM do laboratório (`192.168.9.34`, DMZ — `ep137-pucpr`), ajuste o `.env` antes de subir:
@@ -128,12 +142,14 @@ Sem `WAF_EXTRA_HOST` configurado, o `waf` responde `400` pra qualquer requisiç�
 
 ### Duas VMs (WAF na DMZ, backend na rede interna)
 
-O acima assume `waf` e `backend` no mesmo host. Pra topologia real do laboratório — `waf` na VM da DMZ (`192.168.9.34`, `ep137-pucpr`) e `backend`/`postgres`/`mailpit` na VM da rede interna (`192.168.9.50`, `ep138-pucpr`), com pfSense entre as duas — use os dois arquivos dedicados em vez do `docker-compose.prod.yml`:
+O acima assume `waf` e `backend` no mesmo host. Pra topologia real do laboratório — `waf` na VM da DMZ (`192.168.9.34`, `ep137-pucpr`) e `backend`/`postgres` na VM da rede interna (`192.168.9.50`, `ep138-pucpr`), com pfSense entre as duas — use os dois arquivos dedicados em vez do `docker-compose.prod.yml`:
 
 - **`docker-compose.dmz.yml`** (na VM da DMZ): só o `waf`, `docker compose` normal. `BACKEND_UPSTREAM` já aponta pro IP do backend na rede interna.
-- **`docker-stack.interna.yml`** (na VM interna): `backend` + `postgres` + `mailpit`, formato **Swarm** (`docker stack deploy`), não `docker compose` — os comentários no topo do arquivo explicam as diferenças reais (sem `build:`, sem `depends_on`, secrets vindos do Swarm).
+- **`docker-stack.interna.yml`** (na VM interna): `backend` + `postgres`, formato **Swarm** (`docker stack deploy`), não `docker compose` — os comentários no topo do arquivo explicam as diferenças reais (sem `build:`, sem `depends_on`, secrets vindos do Swarm).
 
 Os dois arquivos têm os valores de rede (IPs, portas, allowlist) fixos no próprio arquivo, não via `.env` — evita o mesmo problema de `.env` compartilhado entre perfis descrito acima. O parâmetro que conecta os dois é `BACKEND_UPSTREAM`, usado em `nginx/templates/conf.d/default.conf.template` pra decidir pra onde o `waf` faz proxy (`backend:8000` por padrão nos perfis de host único; o IP real da outra VM nesta topologia).
+
+TLS interno nessa topologia: rode `generate-internal-pki.sh` **na VM interna**, crie os secrets do Swarm listados no fim do `docker-stack.interna.yml` e leve para `secrets/pki/` da DMZ só `ca.crt`, `waf-client.crt` e `waf-client.key` (esta com dono UID 101). O salto DMZ → interna atravessa o pfSense em HTTPS com mTLS.
 
 `/static/` (CSS/JS do Django Admin e da tela de MFA) não depende de volume compartilhado — o backend serve os próprios estáticos via [WhiteNoise](https://whitenoise.readthedocs.io/), e o `waf` só faz `proxy_pass` pra ele, igual às outras rotas. Funciona igual com os dois no mesmo host ou em VMs separadas.
 

@@ -20,13 +20,15 @@ Só o frontend é publicado no host. O backend participa de duas redes e atua co
 Navegador -> 127.0.0.1:8080 -> waf:8080 (redireciona para HTTPS)
 Navegador -> 127.0.0.1:8443 -> waf:8443 TLS + ModSecurity/OWASP CRS (estáticos do React + proxy reverso)
                                   |
-                                  | /api, /admin, /account -> proxy_pass (HTTP interno + X-Forwarded-Proto)
-                                  | /static -> arquivos coletados (volume compartilhado)
+                                  | /api, /admin, /account, /static -> proxy_pass HTTPS com mTLS
+                                  |   (certificado de cliente do waf + X-Forwarded-Proto)
                                   v
-                               backend:8000 (Gunicorn) -> postgres:5432
+                               backend:8000 (Gunicorn, TLS) --TLS verify-full--> postgres:5432 (só hostssl)
 ```
 
-O container `waf` (imagem `owasp/modsecurity-crs:nginx`, Nginx com o módulo ModSecurity 3 e o OWASP Core Rule Set já compilados) termina TLS (certificado autoassinado — ver README, "TLS local"), serve os artefatos estáticos do build do React (`npm run build`) e faz proxy dos estáticos do Django (`/static/` — admin, two-factor) pro backend, que os serve via WhiteNoise — e inspeciona toda requisição contra o CRS antes dela chegar em qualquer location. A porta 8080 só existe para redirecionar para 8443; nenhum dado sensível trafega nela. Só o `waf` é publicado no host; backend e PostgreSQL permanecem inacessíveis de fora da rede Docker em ambos os perfis. Entre `waf` e backend o tráfego continua HTTP simples — está dentro da rede Docker isolada (`application_net`), não exposta ao host.
+No laboratório o desenho é o mesmo, dividido em duas VMs: `waf` na DMZ (`192.168.9.34`) e backend + PostgreSQL na rede interna (`192.168.9.50`), com o pfSense entre elas. O salto DMZ → interna (`192.168.9.34 → 192.168.9.50:8000`) é HTTPS com mTLS.
+
+O container `waf` (imagem `owasp/modsecurity-crs:nginx`, Nginx com o módulo ModSecurity 3 e o OWASP Core Rule Set já compilados) termina TLS (certificado autoassinado — ver README, "TLS local"), serve os artefatos estáticos do build do React (`npm run build`) e faz proxy dos estáticos do Django (`/static/` — admin, two-factor) pro backend, que os serve via WhiteNoise — e inspeciona toda requisição contra o CRS antes dela chegar em qualquer location. A porta 8080 só existe para redirecionar para 8443; nenhum dado sensível trafega nela. Só o `waf` é publicado no host; backend e PostgreSQL permanecem inacessíveis de fora da rede Docker em ambos os perfis. Entre `waf` e backend o tráfego também é TLS, com autenticação mútua (mTLS), e entre backend e PostgreSQL é TLS com verificação completa do certificado (`verify-full`) — a segmentação de rede não é tratada como substituta da criptografia (Zero Trust: a localização na rede não concede confiança). Os certificados internos vêm de uma CA própria do laboratório (`infra/scripts/generate-internal-pki.sh`).
 
 ## Componentes
 

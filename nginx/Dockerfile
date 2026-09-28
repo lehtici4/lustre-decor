@@ -2,7 +2,10 @@ FROM node:24.7.0-alpine3.22 AS build
 
 WORKDIR /app
 COPY frontend/package*.json ./
-RUN npm install
+# npm ci (não npm install): instala exatamente o que está no package-lock.json
+# e falha se o lock divergir do package.json — build reprodutível, sem
+# dependência "nova" entrando sem revisão (A03, supply chain).
+RUN npm ci --no-audit --no-fund
 COPY frontend/ .
 RUN npm run build
 

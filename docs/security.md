@@ -5,7 +5,7 @@
 **Infraestrutura**
 
 - PostgreSQL sem porta publicada e isolado em rede interna (`database_net`, `internal: true`).
-- Backend sem porta publicada no host, em ambos os perfis (dev e produção local).
+- Backend sem porta publicada no host nos perfis locais; na VM interna publica só a 8000, em HTTPS com mTLS (alcançável apenas pela DMZ via pfSense).
 - Frontend/`waf` vinculados somente à interface de loopback (`127.0.0.1`).
 - Containers da aplicação executados por usuários sem privilégios (inclui o `waf`, via imagem base do OWASP CRS, que já roda como o usuário `nginx`).
 - Linux capabilities removidas dos containers da aplicação (`cap_drop: ALL`).
@@ -13,7 +13,12 @@
 - `no-new-privileges` habilitado em todos os serviços.
 - Segredos (chave do Django, senhas do banco) montados como arquivos via Docker Secrets, fora do contexto de build e do Git.
 - Privilégio mínimo no PostgreSQL: o backend em execução normal usa o papel `lustre_app_runtime`, restrito a `SELECT/INSERT/UPDATE/DELETE` (sem DDL). Migrações usam o papel dono do banco (`lustre_app`), acionado só durante o `migrate` — ver `infra/postgres/init-app-role.sh` e `backend/docker/entrypoint*.sh`.
-- TLS terminado no `waf` do perfil de produção local (certificado autoassinado — ver README, "TLS local"); porta 8080 só redireciona para 8443, nenhum dado sensível trafega em HTTP. Imagem base do `waf` com versão pinada (`owasp/modsecurity-crs:4.28.0-nginx-alpine-202608131208`), não uma tag flutuante.
+- **TLS em todos os saltos**, não só na borda:
+  - navegador → `waf`: TLS 1.2/1.3 com o certificado da DMZ (autoassinado — ver README, "TLS local"); a porta HTTP só redireciona para HTTPS;
+  - `waf` → backend: HTTPS com **autenticação mútua (mTLS)**. O `waf` valida o certificado do backend contra a CA interna e pelo nome `backend.lustre.internal`; o Gunicorn só aceita clientes com certificado da CA interna (na prática, só o `waf`). Quem alcançar `192.168.9.50:8000` pela rede sem esse certificado tem o handshake recusado — ver `backend/docker/gunicorn.conf.py`;
+  - backend → PostgreSQL: TLS com `sslmode=verify-full` (certificado + nome `postgres`); o `pg_hba.conf` só aceita conexões de rede `hostssl` e rejeita explicitamente as sem TLS (`infra/postgres/pg_hba.conf`). O socket Unix, que só existe dentro do container do Postgres, continua como na imagem oficial.
+  - Certificados internos emitidos por uma CA própria do laboratório (`infra/scripts/generate-internal-pki.sh`, chaves EC P-256, entregues como Docker Secrets). **Fail-closed**: sem os arquivos o backend não sobe, e sem a CA o Django não conecta ao banco — nunca há queda silenciosa para texto claro.
+  - Exceção: o perfil de desenvolvimento (`docker-compose.yml`, Vite + `runserver`) não usa TLS interno; nunca é publicado. Imagem base do `waf` com versão pinada (`owasp/modsecurity-crs:4.28.0-nginx-alpine-202608131208`), não uma tag flutuante.
 - WAF na frente de toda requisição: Nginx + ModSecurity 3 + OWASP Core Rule Set (imagem `owasp/modsecurity-crs:nginx`, `nginx/Dockerfile`), nível de paranoia 1, em modo de bloqueio ativo (não só detecção). Cobre injeção de SQL, XSS, path traversal e outras classes de ataque genéricas antes da requisição chegar ao backend ou aos estáticos.
 
 **Autenticação e autorização**
