@@ -93,7 +93,9 @@ services:
     hostname: wazuh.manager
     entrypoint: ["sh", "/usr/local/bin/entrypoint-secrets.sh"]
     environment:
-      INDEXER_URL: https://wazuh.indexer:9200
+      # Com aspas DENTRO do valor, como no compose oficial: o init da imagem
+      # insere isto num `hosts: [...]` do filebeat.yml via sed.
+      INDEXER_URL: '"https://wazuh.indexer:9200"'
       INDEXER_USERNAME: admin
       FILEBEAT_SSL_VERIFICATION_MODE: full
       SSL_CERTIFICATE_AUTHORITIES: /etc/ssl/root-ca.pem
