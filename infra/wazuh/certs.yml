@@ -1,0 +1,14 @@
+# Entrada do wazuh-certs-generator (infra/scripts/init-wazuh.sh). Os nomes são
+# os aliases de rede do docker-stack.wazuh.yml; o SAN de cada certificado sai
+# do campo "ip" (nome DNS ou IP).
+nodes:
+  indexer:
+    - name: wazuh.indexer
+      ip: wazuh.indexer
+  server:
+    - name: wazuh.manager
+      ip: wazuh.manager
+  dashboard:
+    # IP da VM interna: é o endereço que o navegador usa (https://192.168.9.50).
+    - name: wazuh.dashboard
+      ip: 192.168.9.50

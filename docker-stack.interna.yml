@@ -26,11 +26,11 @@
 # verify-full. Certificados da CA interna: infra/scripts/generate-internal-pki.sh.
 #
 # Tag versionada, nunca `latest`: o deploy precisa ser reprodutível e ter um
-# ponto de rollback conhecido (tag anterior: etapa2; antes dela: pre-etapa2).
+# ponto de rollback conhecido (anteriores: etapa2-tls, etapa2, pre-etapa2).
 
 services:
   backend:
-    image: ghcr.io/lehtici4/lustre-decor-backend:etapa2-tls
+    image: ghcr.io/lehtici4/lustre-decor-backend:etapa3
     init: true
     environment:
       APP_ENV: production
@@ -129,6 +129,14 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Log no journald do host com tag fixa: o agente Wazuh do host já coleta o
+    # journald inteiro, e o decoder "lustre-backend" (infra/wazuh/manager/
+    # local_decoder.xml) reconhece a linha pela tag. `docker service logs`
+    # continua funcionando com este driver.
+    logging:
+      driver: journald
+      options:
+        tag: lustre-backend
     healthcheck:
       # HTTPS + certificado de cliente (mTLS) — ver backend/docker/healthcheck.py.
       test: ["CMD", "python", "docker/healthcheck.py"]
@@ -175,6 +183,12 @@ services:
       - FOWNER
       - SETGID
       - SETUID
+    # Mesmo esquema do backend: falhas de autenticação e conexões sem TLS
+    # recusadas pelo pg_hba.conf viram alerta no Wazuh (tag lustre-postgres).
+    logging:
+      driver: journald
+      options:
+        tag: lustre-postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s

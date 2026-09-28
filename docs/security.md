@@ -47,6 +47,9 @@
 
 **Observabilidade**
 
+- Wazuh (SIEM) com agentes nos hosts das duas VMs e regras próprias para os eventos do backend (força bruta, IDOR, recusas de mTLS), do Postgres, do waf, do Fail2ban e do Falco, com mapeamento ATT&CK — ver [Wazuh](wazuh.md).
+- Throttling e logs de segurança usam o IP real do cliente (último item do `X-Forwarded-For`, anexado pelo waf; `NUM_PROXIES=1`). Antes, variar o `X-Forwarded-For` burlava o limite de tentativas de login do DRF.
+
 - Logs estruturados em JSON no `stdout`, sem senha/token/segredo.
 - Eventos de segurança registrados com `user_id` (nunca nome/e-mail) sempre que possível: login (sucesso/falha), logout, cadastro, bloqueio por força bruta, acesso negado por falta de permissão (genérico) e por tentativa de acessar objeto de outro usuário (específico), criação de pedido, alterações administrativas (via Django Admin).
 - Auditoria do ModSecurity/CRS também em JSON no `stdout` do `waf`, uma entrada por requisição bloqueada (regra disparada, score de anomalia, IP, URI) — mesmo padrão dos logs do backend.

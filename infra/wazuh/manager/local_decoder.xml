@@ -1,0 +1,50 @@
+<!--
+  Decoders do Lustre Decor (Wazuh manager). IDs de regra correspondentes em
+  local_rules.xml. Linhas de exemplo para testar com wazuh-logtest em
+  docs/wazuh.md.
+-->
+
+<!--
+  Backend Django. O container do backend usa o driver de log journald com
+  tag "lustre-backend" (docker-stack.interna.yml); o agente do host coleta o
+  journald e a linha chega como
+    Sep 28 17:00:00 ep138-pucpr lustre-backend[123]: {"asctime": ..., "message": "login_failed", ...}
+  O pré-decoder de syslog separa o program_name; o JSON_Decoder extrai os
+  campos do log estruturado (message, levelname, user_id, origin, path...).
+  Linhas não-JSON do mesmo programa (log do Gunicorn) casam só o decoder,
+  sem campos — as regras usam <match> nelas.
+-->
+<decoder name="lustre-backend">
+  <program_name>^lustre-backend$</program_name>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>
+
+<!--
+  Postgres (driver journald, tag "lustre-postgres"). Só o program_name: as
+  regras casam o texto das mensagens FATAL de autenticação.
+-->
+<decoder name="lustre-postgres">
+  <program_name>^lustre-postgres$</program_name>
+</decoder>
+
+<!--
+  Access log dedicado do waf (DMZ, /var/log/lustre-waf/access.log), formato
+  lustre_f2b do nginx/templates/conf.d/default.conf.template:
+    203.0.113.7 [2026-09-28T17:18:47-03:00] 403 upstream=- "GET /?q=<script>" rt=0.000 ua="curl/8.5.0"
+  upstream_status "-" = resposta gerada no próprio waf (ModSecurity, limit_req).
+-->
+<decoder name="lustre-waf">
+  <prematch type="pcre2">^\d{1,3}(?:\.\d{1,3}){3} \[[^\]]+\] \d{3} upstream=</prematch>
+  <regex type="pcre2">^(\S+) \[[^\]]+\] (\d{3}) upstream=(\S+) "(\S+) ([^"]*)"</regex>
+  <order>srcip,status,upstream_status,method,url</order>
+</decoder>
+
+<!--
+  Fail2ban (/var/log/fail2ban.log, nas duas VMs):
+    2026-09-28 17:18:47,123 fail2ban.actions        [812]: NOTICE  [lustre-auth] Ban 203.0.113.7
+-->
+<decoder name="lustre-fail2ban">
+  <prematch type="pcre2">^\d{4}-\d{2}-\d{2} [\d:,]+ fail2ban\.actions\s+\[\d+\]:</prematch>
+  <regex type="pcre2">\[\d+\]:\s+(\w+)\s+\[([^\]]+)\] (Ban|Unban|Restore Ban) (\S+)</regex>
+  <order>f2b_level,jail,f2b_action,srcip</order>
+</decoder>

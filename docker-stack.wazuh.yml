@@ -1,0 +1,292 @@
+# Wazuh (SIEM) na VM interna (192.168.9.50) — stack Swarm SEPARADO do
+# lustre_decor: sobe, atualiza e cai sem tocar na aplicação.
+#
+# Base: wazuh-docker v4.14.7 (single-node). Diferenças para o compose oficial:
+#   - senhas e chaves privadas como Docker Secrets (criptografados em repouso
+#     no Swarm), nunca em variável de ambiente ou arquivo versionado. As
+#     imagens só leem senha por variável: um entrypoint pequeno lê o secret e
+#     exporta antes de chamar o entrypoint original (infra/wazuh/*/entrypoint-secrets.sh);
+#   - internal_users.yml sem os usuários "demo" (senhas públicas) e com hashes
+#     gerados na hora (infra/scripts/init-wazuh.sh);
+#   - registro de agentes exige senha (authd.pass);
+#   - dashboard valida o nome do certificado do indexer (verificationMode: full);
+#   - só o necessário publicado no host: 1514/1515 (agentes) e 443 (dashboard).
+#     API do manager (55000) e indexer (9200) ficam só na rede overlay;
+#   - nenhum docker.sock montado (proibido pelo modelo de adversário, T1611).
+#
+# Pré-requisitos (uma vez, na .50): ./infra/scripts/init-wazuh.sh — ajusta
+# vm.max_map_count, gera certificados, senhas e cria os secrets. Depois:
+#   docker stack deploy -c docker-stack.wazuh.yml wazuh
+#
+# Swarm: sem `depends_on` (o dashboard reinicia até o indexer responder) e
+# `security_opt` é ignorado — ver docs/wazuh.md.
+
+services:
+  indexer:
+    image: wazuh/wazuh-indexer:4.14.7
+    hostname: wazuh.indexer
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./infra/wazuh/indexer/opensearch.yml:/usr/share/wazuh-indexer/config/opensearch.yml:ro
+    secrets:
+      # O plugin de segurança do OpenSearch exige os certificados DENTRO do
+      # diretório de configuração: secrets montados em caminho absoluto, com
+      # dono = usuário do indexer (1000).
+      - source: wazuh_root_ca
+        target: /usr/share/wazuh-indexer/config/certs/root-ca.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: wazuh_indexer_cert
+        target: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: wazuh_indexer_key
+        target: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: wazuh_admin_cert
+        target: /usr/share/wazuh-indexer/config/certs/admin.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: wazuh_admin_key
+        target: /usr/share/wazuh-indexer/config/certs/admin-key.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: wazuh_internal_users
+        target: /usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    networks:
+      wazuh_net:
+        aliases: [wazuh.indexer]
+    healthcheck:
+      # 401 sem credencial = o indexer respondeu em HTTPS (curl sem -f sai 0).
+      test: ["CMD-SHELL", "curl -sk -o /dev/null https://localhost:9200 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    deploy:
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 3G
+
+  manager:
+    image: wazuh/wazuh-manager:4.14.7
+    hostname: wazuh.manager
+    entrypoint: ["sh", "/usr/local/bin/entrypoint-secrets.sh"]
+    environment:
+      INDEXER_URL: https://wazuh.indexer:9200
+      INDEXER_USERNAME: admin
+      FILEBEAT_SSL_VERIFICATION_MODE: full
+      SSL_CERTIFICATE_AUTHORITIES: /etc/ssl/root-ca.pem
+      SSL_CERTIFICATE: /etc/ssl/filebeat.pem
+      SSL_KEY: /etc/ssl/filebeat.key
+      API_USERNAME: wazuh-wui
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 655360
+        hard: 655360
+    ports:
+      # Agentes dos hosts (.50 e .34). No pfSense: liberar só 192.168.9.34 ->
+      # 192.168.9.50 TCP 1514/1515. Modo host: preserva o IP real do agente.
+      - target: 1514
+        published: 1514
+        protocol: tcp
+        mode: host
+      - target: 1515
+        published: 1515
+        protocol: tcp
+        mode: host
+    volumes:
+      - wazuh_api_configuration:/var/ossec/api/configuration
+      - wazuh_etc:/var/ossec/etc
+      - wazuh_logs:/var/ossec/logs
+      - wazuh_queue:/var/ossec/queue
+      - wazuh_var_multigroups:/var/ossec/var/multigroups
+      - wazuh_integrations:/var/ossec/integrations
+      - wazuh_active_response:/var/ossec/active-response/bin
+      - wazuh_agentless:/var/ossec/agentless
+      - wazuh_wodles:/var/ossec/wodles
+      - filebeat_etc:/etc/filebeat
+      - filebeat_var:/var/lib/filebeat
+      - ./infra/wazuh/manager/entrypoint-secrets.sh:/usr/local/bin/entrypoint-secrets.sh:ro
+      # /wazuh-config-mount/etc/* é copiado para /var/ossec/etc a cada início
+      # pelo init da imagem.
+      - ./infra/wazuh/manager/ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - ./infra/wazuh/manager/local_rules.xml:/wazuh-config-mount/etc/rules/local_rules.xml:ro
+      - ./infra/wazuh/manager/local_decoder.xml:/wazuh-config-mount/etc/decoders/local_decoder.xml:ro
+    secrets:
+      - wazuh_indexer_admin_password
+      - wazuh_api_password
+      # Copiado pelo init da imagem para /var/ossec/etc/authd.pass (o cp não
+      # preserva dono): 0444 para o wazuh-authd ler qualquer que seja o usuário.
+      - source: wazuh_authd_pass
+        target: /wazuh-config-mount/etc/authd.pass
+        mode: 0444
+      # Certificados do Filebeat e do conector de vulnerabilidades: dono = o
+      # usuário wazuh (999), como o gerador oficial deixa.
+      - source: wazuh_root_ca
+        target: /etc/ssl/root-ca.pem
+        uid: "999"
+        gid: "999"
+        mode: 0444
+      - source: wazuh_manager_cert
+        target: /etc/ssl/filebeat.pem
+        uid: "999"
+        gid: "999"
+        mode: 0444
+      - source: wazuh_manager_key
+        target: /etc/ssl/filebeat.key
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    networks:
+      wazuh_net:
+        aliases: [wazuh.manager]
+    healthcheck:
+      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'wazuh-remoted is running'"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
+    deploy:
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 2G
+
+  dashboard:
+    image: wazuh/wazuh-dashboard:4.14.7
+    hostname: wazuh.dashboard
+    entrypoint: ["bash", "/usr/local/bin/entrypoint-secrets.sh"]
+    environment:
+      INDEXER_USERNAME: admin
+      WAZUH_API_URL: https://wazuh.manager
+      DASHBOARD_USERNAME: kibanaserver
+      API_USERNAME: wazuh-wui
+    ports:
+      # https://192.168.9.50 — acesso administrativo (Guacamole -> desktop da
+      # .50). O pfSense NÃO deve liberar 443 da DMZ para a .50.
+      - target: 5601
+        published: 443
+        protocol: tcp
+        mode: host
+    volumes:
+      - ./infra/wazuh/dashboard/entrypoint-secrets.sh:/usr/local/bin/entrypoint-secrets.sh:ro
+      - ./infra/wazuh/dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    secrets:
+      - source: wazuh_kibanaserver_password
+        target: wazuh_kibanaserver_password
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: wazuh_api_password
+        target: wazuh_api_password
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: wazuh_root_ca
+        target: /usr/share/wazuh-dashboard/certs/root-ca.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: wazuh_dashboard_cert
+        target: /usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
+      - source: wazuh_dashboard_key
+        target: /usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    networks:
+      wazuh_net:
+        aliases: [wazuh.dashboard]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -o /dev/null https://localhost:5601/app/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    deploy:
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 1536M
+
+networks:
+  wazuh_net:
+    driver: overlay
+
+volumes:
+  wazuh_api_configuration:
+  wazuh_etc:
+  wazuh_logs:
+  wazuh_queue:
+  wazuh_var_multigroups:
+  wazuh_integrations:
+  wazuh_active_response:
+  wazuh_agentless:
+  wazuh_wodles:
+  filebeat_etc:
+  filebeat_var:
+  wazuh-indexer-data:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:
+
+# Todos criados por infra/scripts/init-wazuh.sh (external: já existem no Swarm).
+secrets:
+  wazuh_root_ca:
+    external: true
+  wazuh_indexer_cert:
+    external: true
+  wazuh_indexer_key:
+    external: true
+  wazuh_admin_cert:
+    external: true
+  wazuh_admin_key:
+    external: true
+  wazuh_manager_cert:
+    external: true
+  wazuh_manager_key:
+    external: true
+  wazuh_dashboard_cert:
+    external: true
+  wazuh_dashboard_key:
+    external: true
+  wazuh_internal_users:
+    external: true
+  wazuh_indexer_admin_password:
+    external: true
+  wazuh_kibanaserver_password:
+    external: true
+  wazuh_api_password:
+    external: true
+  wazuh_authd_pass:
+    external: true

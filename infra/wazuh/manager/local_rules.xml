@@ -1,0 +1,276 @@
+<!--
+  Regras do Lustre Decor (Wazuh manager). Faixa reservada: 100100-100499.
+    1001xx  backend Django (log estruturado + recusas de mTLS do Gunicorn) e Postgres (10013x)
+    1002xx  Falco (/var/log/falco/falco.json, nas duas VMs)
+    1003xx  waf da DMZ (access log dedicado)
+    1004xx  Fail2ban (nas duas VMs)
+  Decoders em local_decoder.xml. Cada regra aponta o teste do plano (T..) e a
+  técnica ATT&CK. Linhas de exemplo para o wazuh-logtest em docs/wazuh.md.
+-->
+
+<group name="lustre_decor,backend,">
+
+  <rule id="100100" level="0">
+    <decoded_as>lustre-backend</decoded_as>
+    <description>Lustre Decor backend: evento de log.</description>
+  </rule>
+
+  <!-- T08: força bruta no login -->
+  <rule id="100101" level="5">
+    <if_sid>100100</if_sid>
+    <field name="message">^login_failed$</field>
+    <description>Lustre Decor: falha de login (origem $(origin)).</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100102" level="10" frequency="5" timeframe="120">
+    <if_matched_sid>100101</if_matched_sid>
+    <same_field>origin</same_field>
+    <description>Lustre Decor: 5 falhas de login em 2 min da mesma origem ($(origin)) - possível força bruta.</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <rule id="100103" level="5">
+    <if_sid>100100</if_sid>
+    <field name="message">^mfa_failed$</field>
+    <description>Lustre Decor: código MFA inválido (user_id $(user_id), origem $(origin)).</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100104" level="10" frequency="3" timeframe="300">
+    <if_matched_sid>100103</if_matched_sid>
+    <same_field>user_id</same_field>
+    <description>Lustre Decor: repetidos códigos MFA inválidos para o mesmo usuário ($(user_id)) - senha provavelmente comprometida.</description>
+    <mitre><id>T1110</id><id>T1078</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <rule id="100105" level="8">
+    <if_sid>100100</if_sid>
+    <field name="message">^request_throttled$</field>
+    <description>Lustre Decor: requisição bloqueada pelo throttling do DRF ($(path), origem $(origin)).</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+
+  <!-- A01 / IDOR: acesso a carrinho, pedido ou loja de outro usuário -->
+  <rule id="100106" level="10">
+    <if_sid>100100</if_sid>
+    <field name="message">^forbidden_object_access$</field>
+    <description>Lustre Decor: tentativa de acessar objeto de outro usuário ($(model) $(object_id), user_id $(user_id)).</description>
+    <mitre><id>T1078</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <rule id="100107" level="12" frequency="3" timeframe="300">
+    <if_matched_sid>100106</if_matched_sid>
+    <same_field>user_id</same_field>
+    <description>Lustre Decor: enumeração de objetos de outros usuários pelo mesmo usuário ($(user_id)).</description>
+    <mitre><id>T1078</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <rule id="100108" level="3">
+    <if_sid>100100</if_sid>
+    <field name="message">^permission_denied$</field>
+    <description>Lustre Decor: acesso negado ($(path)).</description>
+  </rule>
+
+  <rule id="100109" level="3">
+    <if_sid>100100</if_sid>
+    <field name="message">^admin_action$</field>
+    <description>Lustre Decor: alteração pelo Django Admin ($(action) $(model) $(object_id), user_id $(user_id)).</description>
+    <group>audit,</group>
+  </rule>
+
+  <rule id="100110" level="3">
+    <if_sid>100100</if_sid>
+    <field name="message">^login_succeeded$</field>
+    <description>Lustre Decor: login concluído (user_id $(user_id)).</description>
+    <group>authentication_success,</group>
+  </rule>
+
+  <!--
+    mTLS: o Gunicorn recusou uma conexão ao backend (sem certificado de
+    cliente, certificado de outra CA, HTTP puro, TLS antigo). O único cliente
+    legítimo é o waf — isto indica alguém falando direto com 192.168.9.50:8000
+    (DMZ comprometida, varredura interna, regra de pfSense aberta).
+  -->
+  <rule id="100120" level="10">
+    <if_sid>100100</if_sid>
+    <match>Invalid request from ip=</match>
+    <regex type="pcre2">\[SSL: [A-Z_]+\]</regex>
+    <description>Lustre Decor: conexão ao backend recusada pelo mTLS (cliente sem certificado válido da CA interna).</description>
+    <mitre><id>T1190</id><id>T1021</id></mitre>
+  </rule>
+
+  <!-- Postgres: só o backend (TLS verify-full + senha) deveria conectar -->
+  <rule id="100130" level="0">
+    <decoded_as>lustre-postgres</decoded_as>
+    <description>Lustre Decor Postgres: evento de log.</description>
+  </rule>
+
+  <rule id="100131" level="8">
+    <if_sid>100130</if_sid>
+    <match>pg_hba.conf rejects connection</match>
+    <description>Postgres recusou conexão pelo pg_hba.conf (sem TLS ou origem/usuário não permitidos).</description>
+    <mitre><id>T1557</id><id>T1078</id></mitre>
+  </rule>
+
+  <rule id="100132" level="7">
+    <if_sid>100130</if_sid>
+    <match>password authentication failed</match>
+    <description>Postgres: falha de autenticação por senha.</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100133" level="12" frequency="5" timeframe="120">
+    <if_matched_sid>100132</if_matched_sid>
+    <description>Postgres: repetidas falhas de senha - possível força bruta contra o banco.</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+</group>
+
+<group name="lustre_decor,falco,">
+
+  <!-- Alertas do Falco em JSON (json_output), um por linha -->
+  <rule id="100200" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="rule">\.+</field>
+    <field name="priority">\.+</field>
+    <field name="output">\.+</field>
+    <description>Falco: $(rule).</description>
+  </rule>
+
+  <rule id="100201" level="5">
+    <if_sid>100200</if_sid>
+    <field name="priority" type="pcre2">(?i)^notice$</field>
+    <description>Falco (notice): $(rule).</description>
+  </rule>
+
+  <rule id="100202" level="10">
+    <if_sid>100200</if_sid>
+    <field name="priority" type="pcre2">(?i)^warning$</field>
+    <description>Falco (warning): $(rule).</description>
+  </rule>
+
+  <rule id="100203" level="13">
+    <if_sid>100200</if_sid>
+    <field name="priority" type="pcre2">(?i)^(error|critical|alert|emergency)$</field>
+    <description>Falco ($(priority)): $(rule).</description>
+  </rule>
+
+  <!-- Regras próprias do Lustre Decor (infra/falco/rules.d), com ATT&CK -->
+  <rule id="100210" level="12">
+    <if_sid>100202,100203</if_sid>
+    <field name="rule">^LustreDecor - Shell iniciado em container</field>
+    <description>Falco: shell interativo em container do Lustre Decor (T03).</description>
+    <mitre><id>T1059</id><id>T1609</id></mitre>
+  </rule>
+
+  <rule id="100211" level="14">
+    <if_sid>100203</if_sid>
+    <field name="rule" type="pcre2">^LustreDecor - (Acesso ao Docker socket|Container privilegiado)</field>
+    <description>Falco: tentativa de escape para o host - $(rule).</description>
+    <mitre><id>T1611</id></mitre>
+  </rule>
+
+  <rule id="100212" level="12">
+    <if_sid>100202</if_sid>
+    <field name="rule">^LustreDecor - Docker secret lido</field>
+    <description>Falco: Docker secret lido por processo inesperado (T04).</description>
+    <mitre><id>T1552.001</id></mitre>
+  </rule>
+
+  <rule id="100213" level="14">
+    <if_sid>100203</if_sid>
+    <field name="rule" type="pcre2">^LustreDecor - (Tentativa de parar sensor|Log ou evidencia apagado|Log de seguranca truncado)</field>
+    <description>Falco: evasão de defesa - $(rule) (T05).</description>
+    <mitre><id>T1562.001</id><id>T1070.004</id></mitre>
+  </rule>
+
+  <rule id="100214" level="12">
+    <if_sid>100202</if_sid>
+    <field name="rule" type="pcre2">^LustreDecor - (Conexao de saida|Ferramenta de rede)</field>
+    <description>Falco: possível exfiltração a partir de container - $(rule) (T06).</description>
+    <mitre><id>T1048</id><id>T1105</id></mitre>
+  </rule>
+
+</group>
+
+<group name="lustre_decor,waf,web,">
+
+  <rule id="100300" level="0">
+    <decoded_as>lustre-waf</decoded_as>
+    <description>Lustre Decor waf: requisição.</description>
+  </rule>
+
+  <!-- upstream "-": resposta gerada no próprio waf, não no Django -->
+  <rule id="100301" level="6">
+    <if_sid>100300</if_sid>
+    <status>^403$</status>
+    <field name="upstream_status">^-$</field>
+    <description>WAF (ModSecurity/CRS) bloqueou requisição de $(srcip): $(method) $(url).</description>
+    <mitre><id>T1190</id></mitre>
+    <group>attack,</group>
+  </rule>
+
+  <rule id="100302" level="10" frequency="10" timeframe="60">
+    <if_matched_sid>100301</if_matched_sid>
+    <same_srcip />
+    <description>WAF: 10 bloqueios em 1 min da mesma origem ($(srcip)) - varredura ou ataque automatizado (T07).</description>
+    <mitre><id>T1190</id><id>T1595</id></mitre>
+    <group>attack,</group>
+  </rule>
+
+  <rule id="100303" level="5">
+    <if_sid>100300</if_sid>
+    <status>^429$</status>
+    <field name="upstream_status">^-$</field>
+    <description>WAF: limite de taxa (limit_req) atingido por $(srcip) em $(url).</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+
+  <!-- 502 com upstream 502: o waf não conseguiu falar com o backend (inclui falha do handshake mTLS) -->
+  <rule id="100304" level="7">
+    <if_sid>100300</if_sid>
+    <status>^502$</status>
+    <description>WAF: backend indisponível ou handshake mTLS falhou ($(url)).</description>
+  </rule>
+
+</group>
+
+<group name="lustre_decor,fail2ban,">
+
+  <rule id="100400" level="0">
+    <decoded_as>lustre-fail2ban</decoded_as>
+    <description>Fail2ban: ação registrada.</description>
+  </rule>
+
+  <rule id="100401" level="8">
+    <if_sid>100400</if_sid>
+    <field name="f2b_action" type="pcre2">^(Ban|Restore Ban)$</field>
+    <description>Fail2ban: $(srcip) banido pela jail $(jail).</description>
+    <mitre><id>T1110</id></mitre>
+    <group>active_response,</group>
+  </rule>
+
+  <rule id="100402" level="3">
+    <if_sid>100400</if_sid>
+    <field name="f2b_action">^Unban$</field>
+    <description>Fail2ban: $(srcip) desbanido (jail $(jail)).</description>
+  </rule>
+
+  <rule id="100403" level="12">
+    <if_sid>100401</if_sid>
+    <field name="jail">^recidive$</field>
+    <description>Fail2ban: $(srcip) reincidente banido por longo prazo (recidive).</description>
+    <mitre><id>T1110</id></mitre>
+  </rule>
+
+</group>

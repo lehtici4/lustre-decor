@@ -1,0 +1,21 @@
+---
+# Gerado por infra/scripts/init-wazuh.sh a partir deste modelo — o arquivo
+# final (com os hashes) vai para secrets/wazuh/ e vira o secret
+# wazuh_internal_users. Só os dois usuários necessários: os usuários "demo"
+# do arquivo oficial (kibanaro, logstash, readall, snapshotrestore) têm
+# senhas públicas e foram removidos.
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "__ADMIN_HASH__"
+  reserved: true
+  backend_roles:
+  - "admin"
+  description: "Administrador do Wazuh indexer (login no dashboard e Filebeat do manager)"
+
+kibanaserver:
+  hash: "__KIBANASERVER_HASH__"
+  reserved: true
+  description: "Usuario de servico do Wazuh dashboard"

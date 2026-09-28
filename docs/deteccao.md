@@ -217,25 +217,10 @@ sudo fail2ban-client status sshd                  # na DMZ
 
 ---
 
-## 5. Integração com o Wazuh (etapa 3.2/3.5 — quando o manager subir)
+## 5. Integração com o Wazuh
 
-No `ossec.conf` do agente, nos dois hosts:
-
-```xml
-<localfile>
-  <log_format>json</log_format>
-  <location>/var/log/falco/falco.json</location>
-</localfile>
-<localfile>
-  <log_format>syslog</log_format>
-  <location>/var/log/fail2ban.log</location>
-</localfile>
-<!-- só na DMZ -->
-<localfile>
-  <log_format>syslog</log_format>
-  <location>/var/log/lustre-waf/access.log</location>
-</localfile>
-```
-
-E FIM (`<syscheck>`) em `/var/log/falco`, `/var/log/lustre-waf`,
-`/etc/fail2ban`, `/etc/falco` e `/var/backups/lustre-decor` (T11).
+Implementada — ver [Wazuh](wazuh.md): stack do manager/indexer/dashboard,
+agentes nos hosts (`infra/scripts/install-wazuh-agent.sh`), coleta de
+`/var/log/falco/falco.json`, `/var/log/fail2ban.log`,
+`/var/log/lustre-waf/access.log` e do log do backend/Postgres (journald), FIM
+e as regras próprias (`infra/wazuh/manager/local_rules.xml`).
