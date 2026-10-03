@@ -106,6 +106,10 @@
     <mitre><id>T1190</id><id>T1021</id></mitre>
   </rule>
 
+</group>
+
+<group name="lustre_decor,postgres,">
+
   <!-- Postgres: só o backend (TLS verify-full + senha) deveria conectar -->
   <rule id="100130" level="0">
     <decoded_as>lustre-postgres</decoded_as>

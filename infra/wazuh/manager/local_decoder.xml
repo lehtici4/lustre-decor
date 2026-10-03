@@ -43,8 +43,11 @@
   Fail2ban (/var/log/fail2ban.log, nas duas VMs):
     2026-09-28 17:18:47,123 fail2ban.actions        [812]: NOTICE  [lustre-auth] Ban 203.0.113.7
 -->
+<!-- O pré-decoder do Wazuh reconhece e CONSOME a data do início da linha
+     (validado no wazuh-logtest): o decoder vê só "fail2ban.actions [812]: ...".
+     Por isso o prematch não é ancorado na data. -->
 <decoder name="lustre-fail2ban">
-  <prematch type="pcre2">^\d{4}-\d{2}-\d{2} [\d:,]+ fail2ban\.actions\s+\[\d+\]:</prematch>
+  <prematch type="pcre2">fail2ban\.actions\s+\[\d+\]:</prematch>
   <regex type="pcre2">\[\d+\]:\s+(\w+)\s+\[([^\]]+)\] (Ban|Unban|Restore Ban) (\S+)</regex>
   <order>f2b_level,jail,f2b_action,srcip</order>
 </decoder>

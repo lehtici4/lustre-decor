@@ -12,6 +12,12 @@
 # Idempotente: reexecutar só reaplica o bloco de configuração e reinicia.
 set -euo pipefail
 
+# apt sem perguntas: o needrestart do Ubuntu abria um diálogo invisível (saída
+# do apt redirecionada) e o script parecia travado em "Scanning linux images".
+# Modo "a" reinicia automaticamente os serviços que precisarem (o próprio
+# needrestart, na configuração padrão do Ubuntu, não reinicia docker/containerd).
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+
 WAZUH_VERSION="4.14.7"
 WAZUH_MANAGER="${WAZUH_MANAGER:-192.168.9.50}"
 BEGIN_MARK="<!-- LUSTRE-DECOR-BEGIN (install-wazuh-agent.sh) -->"

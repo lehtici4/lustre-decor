@@ -26,6 +26,23 @@ certs="$out/certs"
 mkdir -p "$out"
 chmod 700 "$out"
 
+# --- 0. trava: secrets já existem mas os arquivos de origem sumiram ---------
+# O Swarm não devolve o conteúdo de um secret. Se as senhas já foram criadas
+# no Swarm e os .txt foram apagados (o recomendado depois da implantação),
+# gerar senhas novas aqui criaria arquivos que NÃO correspondem ao que os
+# serviços usam. Para recuperar uma senha: docker exec no container que a
+# recebe (ver docs/wazuh.md). Para recomeçar do zero: remover o stack e os
+# secrets wazuh_* antes.
+if docker secret inspect wazuh_indexer_admin_password >/dev/null 2>&1; then
+  for name in indexer_admin_password kibanaserver_password api_password authd_pass; do
+    if [ ! -s "$out/$name.txt" ]; then
+      echo "ERRO: o secret wazuh_* já existe no Swarm mas secrets/wazuh/$name.txt não." >&2
+      echo "Nada foi alterado. Veja 'Recuperar senhas' em docs/wazuh.md." >&2
+      exit 1
+    fi
+  done
+fi
+
 # --- 1. kernel -------------------------------------------------------------
 if [ "$(sysctl -n vm.max_map_count)" -lt 262144 ]; then
   echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-wazuh-indexer.conf >/dev/null

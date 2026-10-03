@@ -59,6 +59,20 @@ sudo ./infra/scripts/install-wazuh-agent.sh dmz          # na .34, com secrets/w
 
 pfSense: liberar **só** `192.168.9.34 → 192.168.9.50` TCP 1514 e 1515. A 443 da .50 não deve ser alcançável pela DMZ.
 
+## Recuperar senhas
+
+Depois da implantação, os arquivos `secrets/wazuh/*.txt` podem (e devem) ser apagados: os serviços leem os Docker Secrets. O Swarm não devolve o conteúdo de um secret, mas o container que o recebe consegue ler — quem está no grupo `docker` da .50 recupera assim:
+
+```bash
+M=$(docker ps -qf name=wazuh_manager)
+docker exec $M cat /run/secrets/wazuh_indexer_admin_password; echo   # login "admin" do dashboard
+docker exec $M cat /wazuh-config-mount/etc/authd.pass; echo          # senha de registro de agentes
+```
+
+(Isso também é um achado: o grupo `docker` equivale a root no host e lê qualquer secret. A proteção do Swarm é em repouso e em trânsito, não contra o administrador do host.)
+
+Não rodar `init-wazuh.sh` de novo depois de apagar os arquivos — ele recusa (trava no passo 0) para não gerar senhas que não batem com os secrets.
+
 ## Testar regras sem disparar ataque (`wazuh-logtest`)
 
 ```bash
@@ -77,7 +91,7 @@ Sep 28 17:00:00 ep138-pucpr lustre-postgres[1]: 2026-09-28 20:00:00.000 UTC [99]
 {"hostname":"ep138-pucpr","output":"Shell iniciado","priority":"Warning","rule":"LustreDecor - Shell iniciado em container da aplicacao","source":"syscall","time":"2026-09-28T20:00:00.000Z"}
 ```
 
-Esperado: regras 100101, 100106, 100120, 100131, 100301, 100401 e 100210, nessa ordem.
+Esperado: regras 100101, 100106, 100120, 100131, 100301, 100401 e 100210, nessa ordem (validado em 03/10/2026; o decoder do Fail2ban precisou de ajuste porque o pré-decoder consome a data do início da linha).
 
 ## Limites conhecidos
 
