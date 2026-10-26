@@ -230,12 +230,19 @@ secrets:
   #   docker secret create postgres_tls_key  ./secrets/pki/postgres.key
   # Secrets do Swarm são imutáveis: para renovar, criar com nome novo (ex.:
   # backend_tls_cert_v2) e trocar a referência aqui.
+  #
+  # Cofre (docs/cofre.md): os três segredos abaixo vêm do OpenBao, com a
+  # versão no nome (django_secret_key_v1...). infra/scripts/cofre-para-swarm.sh
+  # cria os secrets e exporta as variáveis; sem elas, valem os nomes antigos.
   django_secret_key:
     external: true
+    name: ${DJANGO_SECRET_KEY_SECRET:-django_secret_key}
   postgres_password:
     external: true
+    name: ${POSTGRES_PASSWORD_SECRET:-postgres_password}
   postgres_runtime_password:
     external: true
+    name: ${POSTGRES_RUNTIME_PASSWORD_SECRET:-postgres_runtime_password}
   internal_ca_cert:
     external: true
   backend_tls_cert:

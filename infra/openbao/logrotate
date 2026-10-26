@@ -1,0 +1,13 @@
+# /etc/logrotate.d/openbao — instalado por infra/scripts/init-cofre.sh.
+# copytruncate: o OpenBao mantém o arquivo aberto; truncar evita depender de
+# mandar SIGHUP para dentro do container. O agente Wazuh acompanha o
+# truncamento.
+/var/log/openbao/audit.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

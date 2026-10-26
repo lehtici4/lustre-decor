@@ -33,7 +33,17 @@ esac
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$script_dir/../.." && pwd)"
 pass_file="${WAZUH_AUTHD_PASS_FILE:-$repo/secrets/wazuh/authd_pass.txt}"
-[ -s "$pass_file" ] || { echo "ERRO: senha de registro não encontrada em $pass_file" >&2; exit 1; }
+if [ ! -s "$pass_file" ]; then
+  # Agente já instalado e registrado: a senha só serve para (re)registro e já
+  # está em /var/ossec/etc/authd.pass. Reexecutar o script (atualizar o bloco
+  # de configuração, a resposta ativa) não exige recriar o arquivo em texto
+  # puro que a docs/wazuh.md manda apagar depois da implantação.
+  if dpkg -s wazuh-agent >/dev/null 2>&1 && [ -s /var/ossec/etc/client.keys ]; then
+    pass_file=""
+  else
+    echo "ERRO: senha de registro não encontrada em $pass_file" >&2; exit 1
+  fi
+fi
 
 conf=/var/ossec/etc/ossec.conf
 
@@ -59,8 +69,8 @@ if ! dpkg -s wazuh-agent >/dev/null 2>&1; then
   apt-mark hold wazuh-agent >/dev/null
 fi
 
-# Senha de registro sempre presente (reinstalação/re-registro).
-install -m 640 -o root -g wazuh "$pass_file" /var/ossec/etc/authd.pass
+# Senha de registro presente para reinstalação/re-registro.
+[ -n "$pass_file" ] && install -m 640 -o root -g wazuh "$pass_file" /var/ossec/etc/authd.pass
 
 # --- resposta ativa aos alertas do Falco ----------------------------------
 # O execd roda o script como root; dono root e grupo wazuh, como os scripts do
@@ -80,6 +90,7 @@ awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
   echo "$BEGIN_MARK"
   sed "s|__REPO__|$repo|g" "$repo/infra/wazuh/agent/lustre-common.conf"
   [ "$role" = dmz ] && cat "$repo/infra/wazuh/agent/lustre-dmz.conf"
+  [ "$role" = interna ] && cat "$repo/infra/wazuh/agent/lustre-interna.conf"
   echo "$END_MARK"
 } >> "$tmp"
 install -m 640 -o root -g wazuh "$tmp" "$conf"

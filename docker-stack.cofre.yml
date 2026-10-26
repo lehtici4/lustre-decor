@@ -1,0 +1,73 @@
+# Cofre de segredos (OpenBao) na VM interna (192.168.9.50) — stack Swarm
+# SEPARADO, como o do Wazuh: sobe, atualiza e cai sem tocar na aplicação.
+#
+# Papel no projeto (docs/cofre.md):
+#   - fonte da verdade dos segredos (KV v2 em "lustre/"); os serviços continuam
+#     recebendo Docker Secrets, criados a partir do cofre por
+#     infra/scripts/cofre-para-swarm.sh. A loja NÃO depende do cofre estar
+#     destrancado para funcionar;
+#   - autoridade certificadora do SSH (certificados de 8 h para os admins);
+#   - auditoria de cada acesso, coletada pelo Wazuh (regras 1006xx).
+#
+# Pré-requisito (uma vez, na .50): sudo ./infra/scripts/init-cofre.sh
+# (diretório do log de auditoria, logrotate, certificado TLS como secret e o
+# deploy). Depois de cada reboot: unseal com 2 das 3 chaves.
+
+services:
+  openbao:
+    image: openbao/openbao:2.7.1
+    hostname: cofre
+    # "server" -> o entrypoint da imagem roda `bao server -config=/openbao/config`.
+    # A imagem roda como o usuário openbao (uid 100, gid 1000).
+    command: ["server"]
+    environment:
+      # Para o CLI `bao` usado dentro do container (infra/openbao/cofre.sh).
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_CACERT: /run/secrets/cofre_tls_cert
+    ports:
+      # API e interface web. No pfSense: só gestão / Connector do Twingate.
+      - target: 8200
+        published: 8200
+        protocol: tcp
+        mode: host
+    volumes:
+      - cofre_dados:/openbao/file
+      - ./infra/openbao/config.hcl:/openbao/config/cofre.hcl:ro
+      # Log de auditoria no host (dono uid 100, criado pelo init-cofre.sh),
+      # lido pelo agente Wazuh.
+      - /var/log/openbao:/openbao/logs
+    secrets:
+      - source: cofre_tls_cert
+        target: cofre_tls_cert
+        uid: "100"
+        gid: "1000"
+        mode: 0444
+      - source: cofre_tls_key
+        target: cofre_tls_key
+        uid: "100"
+        gid: "1000"
+        mode: 0400
+    healthcheck:
+      # Selado ou não inicializado conta como saudável: depois de um reboot o
+      # cofre fica trancado até o unseal, e o Swarm não pode ficar reiniciando
+      # o container por causa disso.
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null 'https://127.0.0.1:8200/v1/sys/health?sealedcode=200&uninitcode=200' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  cofre_dados:
+
+secrets:
+  cofre_tls_cert:
+    external: true
+  cofre_tls_key:
+    external: true

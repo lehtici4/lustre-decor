@@ -5,6 +5,7 @@
             ativa aos alertas do Falco (/var/ossec/logs/lustre-ar.log)
     1003xx  waf da DMZ (access log dedicado)
     1004xx  Fail2ban (nas duas VMs)
+    1006xx  cofre OpenBao (/var/log/openbao/audit.log, só na .50)
   Decoders em local_decoder.xml. Cada regra aponta o teste do plano (T..) e a
   técnica ATT&CK. Linhas de exemplo para o wazuh-logtest em docs/wazuh.md.
 -->
@@ -257,6 +258,94 @@
     <if_sid>100220</if_sid>
     <field name="lustre_ar">^skipped$</field>
     <description>Resposta ativa ignorada: $(detail).</description>
+  </rule>
+
+</group>
+
+<!--
+  Cofre (OpenBao): log de auditoria em JSON. Cada operação gera uma linha
+  "request" e uma "response"; as regras olham só a "response", que traz o
+  pedido, quem pediu (auth.display_name) e o erro, se houve. Valores de
+  segredo chegam como HMAC. ORDEM IMPORTA: as regras de erro vêm antes da de
+  leitura, porque o Wazuh fica com o primeiro filho que casar.
+-->
+<group name="lustre_decor,cofre,">
+
+  <rule id="100600" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="type">^response$</field>
+    <field name="request.path">\.+</field>
+    <description>Cofre: operação registrada na auditoria.</description>
+  </rule>
+
+  <rule id="100605" level="8">
+    <if_sid>100600</if_sid>
+    <field name="request.path">^auth/userpass/login/</field>
+    <field name="error">\.+</field>
+    <description>Cofre: falha de login ($(request.path), origem $(request.remote_address)).</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100606" level="12" frequency="5" timeframe="120">
+    <if_matched_sid>100605</if_matched_sid>
+    <same_field>request.remote_address</same_field>
+    <description>Cofre: 5 falhas de login em 2 min da mesma origem ($(request.remote_address)) - possível força bruta.</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <rule id="100603" level="8">
+    <if_sid>100600</if_sid>
+    <field name="error" type="pcre2">permission denied</field>
+    <description>Cofre: acesso negado a $(request.path) ($(auth.display_name), origem $(request.remote_address)).</description>
+    <mitre><id>T1555</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <rule id="100604" level="12" frequency="5" timeframe="120">
+    <if_matched_sid>100603</if_matched_sid>
+    <same_field>request.remote_address</same_field>
+    <description>Cofre: acessos negados repetidos da mesma origem ($(request.remote_address)) - enumeração de segredos.</description>
+    <mitre><id>T1555</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <rule id="100607" level="12">
+    <if_sid>100600</if_sid>
+    <field name="auth.display_name">^root$</field>
+    <description>Cofre: operação com o ROOT TOKEN ($(request.operation) $(request.path)).</description>
+    <mitre><id>T1078</id></mitre>
+  </rule>
+
+  <rule id="100609" level="10">
+    <if_sid>100600</if_sid>
+    <field name="request.path" type="pcre2">^sys/(seal|policies/acl/|auth/|mounts/|audit)</field>
+    <field name="request.operation" type="pcre2">^(create|update|delete)$</field>
+    <description>Cofre: mudança de configuração ($(request.operation) $(request.path) por $(auth.display_name)).</description>
+    <mitre><id>T1098</id></mitre>
+  </rule>
+
+  <rule id="100608" level="6">
+    <if_sid>100600</if_sid>
+    <field name="request.path">^ssh-client-signer/sign/</field>
+    <description>Cofre: certificado SSH emitido para $(auth.display_name).</description>
+  </rule>
+
+  <rule id="100602" level="5">
+    <if_sid>100600</if_sid>
+    <field name="request.path" type="pcre2">^lustre/(data|metadata)/</field>
+    <field name="request.operation" type="pcre2">^(create|update|patch|delete)$</field>
+    <description>Cofre: segredo alterado ($(request.operation) $(request.path) por $(auth.display_name)).</description>
+    <group>audit,</group>
+  </rule>
+
+  <rule id="100601" level="3">
+    <if_sid>100600</if_sid>
+    <field name="request.path">^lustre/data/</field>
+    <field name="request.operation">^read$</field>
+    <description>Cofre: segredo lido ($(request.path) por $(auth.display_name)).</description>
+    <group>audit,</group>
   </rule>
 
 </group>
