@@ -249,7 +249,7 @@
   <!-- A resposta NÃO aconteceu: precisa de alguém olhando -->
   <rule id="100225" level="12">
     <if_sid>100220</if_sid>
-    <field name="lustre_ar">^(failed|skipped_rate_limit)$</field>
+    <field name="lustre_ar" type="pcre2">^(failed|skipped_rate_limit)$</field>
     <description>Resposta ativa NÃO executada ($(lustre_ar)): $(detail).</description>
   </rule>
 
