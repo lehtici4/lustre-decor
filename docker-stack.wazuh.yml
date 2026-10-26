@@ -26,7 +26,11 @@ services:
     image: wazuh/wazuh-indexer:4.14.7
     hostname: wazuh.indexer
     environment:
-      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+      # Heap fixo de 2 GB (Xms = Xmx). A .50 passou de ~4 GB efetivos (memória
+      # dinâmica do Hyper-V presa no balloon) para 16 GB em 22/10/2026. Regra
+      # do OpenSearch: heap <= metade da memória do container — por isso o
+      # limite de 4G abaixo; o resto é off-heap e cache de arquivos.
+      OPENSEARCH_JAVA_OPTS: "-Xms2g -Xmx2g"
     ulimits:
       memlock:
         soft: -1
@@ -86,7 +90,7 @@ services:
         condition: any
       resources:
         limits:
-          memory: 3G
+          memory: 4G
 
   manager:
     image: wazuh/wazuh-manager:4.14.7
@@ -188,6 +192,10 @@ services:
       WAZUH_API_URL: https://wazuh.manager
       DASHBOARD_USERNAME: kibanaserver
       API_USERNAME: wazuh-wui
+      # Heap do Node abaixo do limite do serviço (1536M): sem isto o V8 cresce
+      # até o cgroup matar o processo (OOM) e o dashboard "trava" e reinicia
+      # em vez de fazer coleta de lixo.
+      NODE_OPTIONS: "--max-old-space-size=1024"
     ports:
       # https://192.168.9.50 — acesso administrativo (Guacamole -> desktop da
       # .50). O pfSense NÃO deve liberar 443 da DMZ para a .50.

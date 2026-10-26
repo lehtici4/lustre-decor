@@ -93,6 +93,63 @@ Sep 28 17:00:00 ep138-pucpr lustre-postgres[1]: 2026-09-28 20:00:00.000 UTC [99]
 
 Esperado: regras 100101, 100106, 100120, 100131, 100301, 100401 e 100210, nessa ordem (validado em 03/10/2026; o decoder do Fail2ban precisou de ajuste porque o pré-decoder consome a data do início da linha).
 
+## Desempenho
+
+O Wazuh divide a .50 com a aplicação. Sintomas de falta de recurso: dashboard lento ou "travando", serviço reiniciando sozinho (`docker service ps wazuh_manager` com várias tarefas `Shutdown`), agentes alternando entre *Active* e *Disconnected*.
+
+**Diagnóstico** (sem sudo, só lê): `./infra/scripts/wazuh-diagnostico.sh > ~/wazuh-diag.txt 2>&1`. O que olhar:
+
+| Saída | Problema |
+|---|---|
+| `vmstat`: `si`/`so` > 0, `free`: swap usada | VM sem RAM; o heap do indexer vai para o swap e tudo congela nas coletas de lixo |
+| PSI `memory`/`io` com `avg10` alto | processos esperando memória/disco |
+| `OOMKilled=true` | o serviço passou do `limits.memory` do stack e foi morto |
+| `heap_used_percent` sempre > 85, `rejected` > 0, `breakers.parent.tripped` > 0 | heap do indexer pequeno para o volume |
+| muitos shards, 3 `pri` por índice diário | template oficial pensado para cluster |
+| uma regra (geralmente do Falco) com milhares de alertas/dia | ruído — tuning |
+| `events_dropped` > 0 | analysisd não dá conta (EPS alto) |
+| `queue/vd*` com GB | feed de vulnerabilidades |
+
+**Ajustes aplicados**
+
+- **Manager** (`ossec.conf`): desligados rootcheck, syscheck, SCA e syscollector *do próprio manager* — o "agente 000" é o container do manager; o host já é coberto pelo agente 001. Desligada a **detecção de vulnerabilidades** (download e descompressão do feed CTI: maior consumidor de CPU/RAM/disco do manager e incompatível com o egress filtering da VULN-03 — vulnerabilidades das imagens ficam com o Trivy). Removidos os comandos `df`/`netstat`/`last` periódicos do arquivo oficial.
+- **Dashboard** (`docker-stack.wazuh.yml`): `NODE_OPTIONS=--max-old-space-size=1024`, abaixo do limite de 1536M do serviço — o Node coleta lixo em vez de ser morto pelo cgroup.
+- **Indexer** (`./infra/scripts/wazuh-indexer-tuning.sh`, sem sudo): template `lustre-single-node` com 1 shard, 0 réplicas e `refresh_interval` 10 s para os índices diários de alertas (vale a partir do índice do dia seguinte); réplicas 0 nos índices `wazuh-*` existentes (cluster verde).
+
+Depois de desligar a detecção de vulnerabilidades, o feed já baixado pode ser apagado para liberar disco: `docker exec $(docker ps -qf name=wazuh_manager) rm -rf /var/ossec/queue/vd /var/ossec/queue/vd_updater` (volta a ser baixado se o módulo for religado).
+
+Pendente de sudo: `vm.swappiness=1` (ou desligar o swap) na .50 — com swap ativo o indexer congela mesmo com RAM "sobrando".
+
+## Resposta ativa aos alertas do Falco
+
+O Wazuh executa `lustre-falco-ar` **no agente do host onde o Falco disparou** (`<location>local</location>`), como root. O script (Python, só biblioteca padrão) decide a ação pela regra:
+
+| Alerta (regra) | Resposta |
+|---|---|
+| 100210 shell em container · 100211 docker.sock / container privilegiado · 100212 secret lido · 100214 ferramenta de rede em container | congela o container (`docker pause`), guarda evidência em `/var/ossec/logs/lustre-ar/<data>_<container>_*/` (alerta, `inspect`, `top`, `diff`, últimas 300 linhas de log) e **recria o container a partir da imagem**: Swarm → `docker kill` e o serviço sobe outra tarefa; Compose → `docker compose up -d --force-recreate --no-deps <serviço>`. A camada gravável, onde ficaria o que o atacante deixou, é descartada |
+| 100214 conexão de saída para IP público | `DROP` do IP de destino na chain `DOCKER-USER` por 1 h (o execd remove ao fim do timeout) |
+| 100213 tentativa de parar sensor | 15 s depois, religa `falco-modern-bpf` e `fail2ban` se estiverem parados/mascarados |
+
+Salvaguardas: só age em containers `lustre_decor*` (exceto container **privilegiado** de qualquer nome, que é derrubado), nunca nos do Wazuh; no máximo **3 recriações por serviço em 15 min** (depois disso só alerta — evita laço kill/recria se uma regra der falso positivo na subida); bloqueio de saída só para IP público; segue o protocolo `check_keys` do execd e não age sem resposta dele.
+
+Cada ação vira uma linha JSON em `/var/ossec/logs/lustre-ar.log` → regras **100221** (container recriado), **100222/100223** (bloqueio de saída/fim), **100224** (sensor religado), **100225** (resposta NÃO executada, nível 12).
+
+Implantação: manager — `docker service update --force wazuh_manager` (comandos e `<active-response>` no `ossec.conf`); agentes — `sudo ./infra/scripts/install-wazuh-agent.sh interna|dmz` (instala o script e coleta o log). **Sem sudo o script não chega ao agente**: o manager já pede a resposta, e o `ossec.log` do agente registra que o executável não existe — nada é executado.
+
+Teste ao vivo na .50 (depois da instalação):
+
+```bash
+docker exec "$(docker ps -qf name=lustre_decor_backend)" sh -c id   # 100210
+watch docker service ps lustre_decor_backend                           # tarefa morta e outra Running
+sudo tail -n 3 /var/ossec/logs/lustre-ar.log
+```
+
+No `wazuh-logtest` (regra 100221):
+
+```text
+{"lustre_ar": "container_contained", "ar_time": "2026-10-22T02:31:23Z", "trigger_rule": "100210", "falco_rule": "LustreDecor - Shell iniciado em container da aplicacao", "container": "lustre_decor_backend.1.xyz", "service": "lustre_decor_backend", "detail": "docker kill", "evidence": "/var/ossec/logs/lustre-ar/x"}
+```
+
 ## Limites conhecidos
 
 - **`security_opt` é ignorado pelo Swarm** (vale para todos os stacks da .50): `no-new-privileges` não chega aos containers. A correção é no daemon — `"no-new-privileges": true` em `/etc/docker/daemon.json` da .50, seguido de `sudo systemctl restart docker` (os serviços voltam sozinhos com `restart_policy: any`).

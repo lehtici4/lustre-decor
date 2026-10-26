@@ -1,7 +1,8 @@
 <!--
   Regras do Lustre Decor (Wazuh manager). Faixa reservada: 100100-100499.
     1001xx  backend Django (log estruturado + recusas de mTLS do Gunicorn) e Postgres (10013x)
-    1002xx  Falco (/var/log/falco/falco.json, nas duas VMs)
+    1002xx  Falco (/var/log/falco/falco.json, nas duas VMs); 10022x = resposta
+            ativa aos alertas do Falco (/var/ossec/logs/lustre-ar.log)
     1003xx  waf da DMZ (access log dedicado)
     1004xx  Fail2ban (nas duas VMs)
   Decoders em local_decoder.xml. Cada regra aponta o teste do plano (T..) e a
@@ -203,6 +204,59 @@
     <field name="rule" type="pcre2">^LustreDecor - (Conexao de saida|Ferramenta de rede)</field>
     <description>Falco: possível exfiltração a partir de container - $(rule) (T06).</description>
     <mitre><id>T1048</id><id>T1105</id></mitre>
+  </rule>
+
+</group>
+
+<!--
+  Resposta ativa (infra/wazuh/agent/active-response/lustre-falco-ar). Cada
+  ação do script vira uma linha JSON em /var/ossec/logs/lustre-ar.log no host,
+  coletada pelo agente: o dashboard mostra o alerta do Falco E a resposta.
+  Comandos e regras que disparam a resposta: <active-response> no ossec.conf.
+-->
+<group name="lustre_decor,active_response,">
+
+  <rule id="100220" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="lustre_ar">\.+</field>
+    <description>Lustre Decor: registro da resposta ativa.</description>
+  </rule>
+
+  <rule id="100221" level="10">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^container_contained$</field>
+    <description>Resposta ativa: container $(container) recriado a partir da imagem após "$(falco_rule)" (evidência em $(evidence)).</description>
+  </rule>
+
+  <rule id="100222" level="10">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^egress_blocked$</field>
+    <description>Resposta ativa: saída dos containers para $(target) bloqueada por 1 h ($(container)).</description>
+  </rule>
+
+  <rule id="100223" level="3">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^egress_unblocked$</field>
+    <description>Resposta ativa: fim do bloqueio de saída para $(target).</description>
+  </rule>
+
+  <rule id="100224" level="10">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^sensor_restored$</field>
+    <description>Resposta ativa: sensor religado após tentativa de parada ($(detail)).</description>
+  </rule>
+
+  <!-- A resposta NÃO aconteceu: precisa de alguém olhando -->
+  <rule id="100225" level="12">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^(failed|skipped_rate_limit)$</field>
+    <description>Resposta ativa NÃO executada ($(lustre_ar)): $(detail).</description>
+  </rule>
+
+  <rule id="100226" level="3">
+    <if_sid>100220</if_sid>
+    <field name="lustre_ar">^skipped$</field>
+    <description>Resposta ativa ignorada: $(detail).</description>
   </rule>
 
 </group>

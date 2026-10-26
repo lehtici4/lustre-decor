@@ -62,6 +62,13 @@ fi
 # Senha de registro sempre presente (reinstalação/re-registro).
 install -m 640 -o root -g wazuh "$pass_file" /var/ossec/etc/authd.pass
 
+# --- resposta ativa aos alertas do Falco ----------------------------------
+# O execd roda o script como root; dono root e grupo wazuh, como os scripts do
+# pacote. O log das ações é coletado pelo bloco abaixo (lustre-common.conf).
+install -m 750 -o root -g wazuh "$repo/infra/wazuh/agent/active-response/lustre-falco-ar" \
+  /var/ossec/active-response/bin/lustre-falco-ar
+[ -e /var/ossec/logs/lustre-ar.log ] || install -m 640 -o root -g wazuh /dev/null /var/ossec/logs/lustre-ar.log
+
 # --- bloco do Lustre Decor no ossec.conf -----------------------------------
 # Remove o bloco anterior (se houver) e anexa o atual.
 tmp="$(mktemp)"
