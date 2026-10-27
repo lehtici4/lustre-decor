@@ -126,6 +126,13 @@
 - list: lustre_secret_readers
   items: [python, python3, gunicorn, postgres, nginx, docker-entrypoi]
 
+# O runtime abre cada /run/secrets/* ao montar o container ("runc:[1:CHILD]
+# init", filho do runc). Sem esta exceção, TODA subida de container gerava a
+# 100212 — e, com a resposta ativa, o container recriado era recriado de novo
+# (laço visto em 26/10/2026, contido pelo limite de 3 recriações).
+- macro: lustre_runc_init
+  condition: (proc.name startswith "runc" or proc.pname = runc)
+
 - rule: LustreDecor - Docker secret lido por processo inesperado
   desc: >
     Arquivo em /run/secrets aberto para leitura por um processo que não é o
@@ -138,6 +145,7 @@
     and fd.name startswith /run/secrets/
     and not proc.name in (lustre_secret_readers)
     and not proc.acmdline contains "entrypoint"
+    and not lustre_runc_init
   output: >
     Secret lido por processo inesperado (container=%container.name
     file=%fd.name proc=%proc.name cmd=%proc.cmdline parent=%proc.pname
@@ -245,11 +253,13 @@
   desc: >
     Container do Lustre Decor tentou conectar em IP público. Registra a
     tentativa mesmo quando o egress do pfSense bloqueia (T1048/T1567).
+    Só IPv4: as redes Docker do projeto não têm IPv6 roteado, e com IPv6 o
+    healthcheck (curl/python em ::1) disparava a cada 10 s (26/10/2026).
   condition: >
     evt.type = connect
     and container
     and lustre_container
-    and (fd.typechar = 4 or fd.typechar = 6)
+    and fd.typechar = 4
     and fd.ip != "0.0.0.0"
     and fd.net != "127.0.0.0/8"
     and not fd.snet in (rfc_1918_addresses)

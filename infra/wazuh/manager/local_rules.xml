@@ -171,6 +171,22 @@
     <description>Falco ($(priority)): $(rule).</description>
   </rule>
 
+  <!-- Batimento do próprio Falco (metrics a cada 15 min): sem alerta -->
+  <rule id="100205" level="0">
+    <if_sid>100200</if_sid>
+    <field name="rule">^Falco internal: metrics</field>
+    <description>Falco: batimento (metrics snapshot).</description>
+  </rule>
+
+  <!-- Sensor travado ou parado (comando lustre-falco-vivo do agente) -->
+  <rule id="100230" level="12">
+    <if_sid>530</if_sid>
+    <match>^ossec: output: 'lustre-falco-vivo'</match>
+    <regex type="pcre2">falco_vivo=0|estado=(?!active)</regex>
+    <description>Falco sem emitir eventos há mais de 1 h ou serviço parado: sensor de runtime cego.</description>
+    <mitre><id>T1562.001</id></mitre>
+  </rule>
+
   <!-- Regras próprias do Lustre Decor (infra/falco/rules.d), com ATT&CK -->
   <rule id="100210" level="12">
     <if_sid>100202,100203</if_sid>

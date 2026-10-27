@@ -34,3 +34,26 @@ syslog_output:
 # O unit systemd do pacote já descarta o stdout (StandardOutput=null).
 stdout_output:
   enabled: false
+
+# Servidor web embutido (/healthz). O padrão escuta em 0.0.0.0:8765 — era a
+# "porta 8765 sem serviço identificado" do pentest (VULN-05, .34 e .50). Só
+# localhost: ninguém de fora precisa do healthcheck do sensor.
+webserver:
+  enabled: true
+  listen_address: 127.0.0.1
+  listen_port: 8765
+
+# Batimento: um evento "Falco internal: metrics snapshot" a cada 15 min no
+# falco.json. O agente Wazuh confere se o arquivo mudou na última hora
+# (lustre-common.conf, regra 100230): Falco travado deixa de ser silencioso.
+# Em 26/10/2026 o processo ficou vivo mas sem emitir nada por ~75 min.
+metrics:
+  enabled: true
+  interval: 15m
+  output_rule: true
+  resource_utilization_enabled: true
+  state_counters_enabled: false
+  kernel_event_counters_enabled: true
+  libbpf_stats_enabled: false
+  convert_memory_to_mb: true
+  include_empty_values: false

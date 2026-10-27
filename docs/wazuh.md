@@ -129,12 +129,15 @@ O Wazuh executa `lustre-falco-ar` **no agente do host onde o Falco disparou** (`
 | 100210 shell em container · 100211 docker.sock / container privilegiado · 100212 secret lido · 100214 ferramenta de rede em container | congela o container (`docker pause`), guarda evidência em `/var/ossec/logs/lustre-ar/<data>_<container>_*/` (alerta, `inspect`, `top`, `diff`, últimas 300 linhas de log) e **recria o container a partir da imagem**: Swarm → `docker kill` e o serviço sobe outra tarefa; Compose → `docker compose up -d --force-recreate --no-deps <serviço>`. A camada gravável, onde ficaria o que o atacante deixou, é descartada |
 | 100214 conexão de saída para IP público | `DROP` do IP de destino na chain `DOCKER-USER` por 1 h (o execd remove ao fim do timeout) |
 | 100213 tentativa de parar sensor | 15 s depois, religa `falco-modern-bpf` e `fail2ban` se estiverem parados/mascarados |
+| 100230 Falco sem eventos há 1 h ou parado (batimento do agente a cada 10 min) | reinicia o Falco — no máximo 1 vez por hora |
 
-Salvaguardas: só age em containers `lustre_decor*` (exceto container **privilegiado** de qualquer nome, que é derrubado), nunca nos do Wazuh; no máximo **3 recriações por serviço em 15 min** (depois disso só alerta — evita laço kill/recria se uma regra der falso positivo na subida); bloqueio de saída só para IP público; segue o protocolo `check_keys` do execd e não age sem resposta dele.
+Salvaguardas: vários alertas do mesmo container na mesma rajada geram **uma** ação; só age em containers `lustre_decor*` (exceto container **privilegiado** de qualquer nome, que é derrubado), nunca nos do Wazuh; no máximo **3 recriações por serviço em 15 min** (depois disso só alerta — evita laço kill/recria se uma regra der falso positivo na subida); bloqueio de saída só para IP público; segue o protocolo `check_keys` do execd e não age sem resposta dele.
 
 Cada ação vira uma linha JSON em `/var/ossec/logs/lustre-ar.log` → regras **100221** (container recriado), **100222/100223** (bloqueio de saída/fim), **100224** (sensor religado), **100225** (resposta NÃO executada, nível 12).
 
 Implantação: manager — `docker service update --force wazuh_manager` (comandos e `<active-response>` no `ossec.conf`); agentes — `sudo ./infra/scripts/install-wazuh-agent.sh interna|dmz` (instala o script e coleta o log). **Sem sudo o script não chega ao agente**: o manager já pede a resposta, e o `ossec.log` do agente registra que o executável não existe — nada é executado.
+
+Validado em 26/10/2026: `docker exec ... sh -c id` → 100210 → backend recriado em 26 s. O mesmo teste expôs dois falsos positivos que causavam laço de recriação, já corrigidos nas regras do Falco: o `runc init` lendo `/run/secrets` a cada subida de container (100212) e o healthcheck em `::1` (100214, IPv6). E mostrou o Falco da .50 vivo porém sem emitir eventos por ~75 min — daí o batimento (`metrics` a cada 15 min + regra 100230).
 
 Teste ao vivo na .50 (depois da instalação):
 

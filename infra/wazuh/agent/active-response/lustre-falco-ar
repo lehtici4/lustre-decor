@@ -19,6 +19,7 @@ Ação por regra (o script decide pela regra do Falco; ver docs/wazuh.md):
                                             o timeout com "delete")
   100213 tentativa de parar sensor       -> religa Falco/Fail2ban
   (demais regras do 100213)              -> nenhuma ação
+  100230 Falco travado ou parado         -> reinicia o Falco (máx. 1 vez por hora)
 
 Recriar = Swarm: `docker kill` na tarefa, o Swarm sobe outra do zero.
           Compose: `docker compose up -d --force-recreate --no-deps <serviço>`.
@@ -173,6 +174,8 @@ def detach():
 # decisão
 # ---------------------------------------------------------------------------
 def decide(rule_id, falco_rule):
+    if rule_id == "100230":
+        return "falco_restart"
     if rule_id == "100213":
         if falco_rule.startswith("LustreDecor - Tentativa de parar sensor"):
             return "sensor"
@@ -187,8 +190,8 @@ def decide(rule_id, falco_rule):
 # ---------------------------------------------------------------------------
 # recriar container
 # ---------------------------------------------------------------------------
-def rate_limited(key):
-    """True se `key` já teve RATE_MAX ações na janela. Registra a ação."""
+def rate_limited(key, maximo=RATE_MAX, janela=RATE_WINDOW):
+    """True se `key` já teve `maximo` ações na janela. Registra a ação."""
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     fd = os.open(STATE_FILE, os.O_RDWR | os.O_CREAT, 0o600)
     with os.fdopen(fd, "r+") as f:
@@ -198,8 +201,8 @@ def rate_limited(key):
         except ValueError:
             state = {}
         t = time.time()
-        hist = [x for x in state.get(key, []) if t - x < RATE_WINDOW]
-        limited = len(hist) >= RATE_MAX
+        hist = [x for x in state.get(key, []) if t - x < janela]
+        limited = len(hist) >= maximo
         if not limited:
             hist.append(t)
         state[key] = hist
@@ -257,6 +260,14 @@ def contain(alert, rule_id, falco_rule, cname):
     if not real_name.startswith(APP_PREFIX) and not privileged:
         log("skipped", trigger_rule=rule_id, falco_rule=falco_rule, container=real_name,
             detail="container fora do escopo do Lustre Decor")
+        return
+
+    # Vários alertas do mesmo evento chegam juntos (ex.: um secret por arquivo):
+    # só o primeiro age sobre este container; os outros saem sem gastar a cota
+    # do serviço nem disparar um segundo kill.
+    if rate_limited("ctr:" + cid, 1, 600):
+        log("debug", trigger_rule=rule_id, falco_rule=falco_rule, container=real_name,
+            detail="container já tratado por outro alerta da mesma rajada")
         return
 
     swarm_service = labels.get("com.docker.swarm.service.name")
@@ -371,6 +382,25 @@ def restore_sensors(rule_id, falco_rule):
         log("debug", trigger_rule=rule_id, falco_rule=falco_rule, detail="sensores já estavam ativos")
 
 
+def restart_falco(rule_id):
+    """Falco vivo mas sem emitir eventos (visto em 26/10/2026) não se resolve
+    com `start`: precisa de restart. No máximo 1 por hora, para um falso
+    positivo do batimento não virar laço de reinício."""
+    if rate_limited("falco-restart", 1, 3600):
+        log("skipped_rate_limit", trigger_rule=rule_id, detail="Falco já reiniciado na última hora; investigar manualmente")
+        return
+    unit = next((u for u in ("falco-modern-bpf", "falco")
+                 if run(["systemctl", "show", "-p", "LoadState", "--value", u])[1].strip() == "loaded"), None)
+    if not unit:
+        log("failed", trigger_rule=rule_id, detail="serviço do Falco não encontrado")
+        return
+    rc, _, err = run(["systemctl", "restart", unit])
+    if rc == 0:
+        log("sensor_restored", trigger_rule=rule_id, falco_rule="batimento", detail="%s reiniciado" % unit)
+    else:
+        log("failed", trigger_rule=rule_id, detail="restart %s: %s" % (unit, err.strip()[:200]))
+
+
 # ---------------------------------------------------------------------------
 def main():
     try:
@@ -406,7 +436,9 @@ def main():
     if command != "add":
         return  # recriação e religar sensor não têm timeout
 
-    if action == "contain":
+    if action == "falco_restart":
+        keys = ["falco-restart"]
+    elif action == "contain":
         cname = falco_field(alert, "container.name", "container")
         if not cname:
             log("skipped", trigger_rule=rule_id, falco_rule=falco_rule,
@@ -425,6 +457,8 @@ def main():
     detach()
     if action == "contain":
         contain(alert, rule_id, falco_rule, cname)
+    elif action == "falco_restart":
+        restart_falco(rule_id)
     else:
         restore_sensors(rule_id, falco_rule)
 
