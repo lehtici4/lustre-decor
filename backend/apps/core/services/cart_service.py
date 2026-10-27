@@ -34,6 +34,9 @@ def add_item(user, product_id: int, quantity: int) -> Cart:
 def get_owned_item(user, pk: int) -> CartItem:
     item = CartItem.objects.filter(pk=pk).select_related("cart", "product").first()
     if item is None:
+        # ID inexistente: sozinho não diz nada, mas uma sequência deles do
+        # mesmo usuário é enumeração (regra 100112 do Wazuh, VULN-07).
+        logger.info("object_not_found", extra={"user_id": user.id, "model": "CartItem", "object_id": pk})
         raise Http404
 
     if item.cart.user_id != user.id:

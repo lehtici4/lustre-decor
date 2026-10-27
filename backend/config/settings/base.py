@@ -72,6 +72,8 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django_otp.middleware.OTPMiddleware",
+    # Depois do OTPMiddleware: usa user.is_verified(). Ver apps/core/middleware.py.
+    "apps.core.middleware.PrivilegedRouteAuditMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

@@ -93,6 +93,19 @@ Sep 28 17:00:00 ep138-pucpr lustre-postgres[1]: 2026-09-28 20:00:00.000 UTC [99]
 
 Esperado: regras 100101, 100106, 100120, 100131, 100301, 100401 e 100210, nessa ordem (validado em 03/10/2026; o decoder do Fail2ban precisou de ajuste porque o pré-decoder consome a data do início da linha).
 
+### Eventos de VULN-06 e VULN-07 (27/10/2026)
+
+Falha de login agora inclui requisição malformada (`reason=invalid_request`, HTTP 400) e o login do admin/two-factor, pelo sinal `user_login_failed`. Abuso autenticado gera `object_not_found` (ID inexistente em rota de dono) e `privileged_route_denied` (cliente em rota de parceiro ou no `/admin/`). Linhas para o `wazuh-logtest`:
+
+```text
+Oct 27 12:00:00 ep138-pucpr lustre-backend[1]: {"asctime": "2026-10-27 12:00:00", "levelname": "WARNING", "name": "apps.accounts", "message": "login_failed", "origin": "192.168.111.9", "path": "/api/v1/auth/login/", "reason": "invalid_request", "fields": ["password"]}
+Oct 27 12:00:00 ep138-pucpr lustre-backend[1]: {"asctime": "2026-10-27 12:00:00", "levelname": "INFO", "name": "apps.orders", "message": "object_not_found", "user_id": 7, "model": "Order", "object_id": 999}
+Oct 27 12:00:00 ep138-pucpr lustre-backend[1]: {"asctime": "2026-10-27 12:00:00", "levelname": "WARNING", "name": "apps.core", "message": "privileged_route_denied", "user_id": 7, "origin": "192.168.111.9", "path": "/api/v1/partner/products/"}
+192.168.111.9 [2026-10-27T12:00:00-03:00] 400 upstream=400 "POST /api/v1/auth/login/" rt=0.010 ua="hydra"
+```
+
+Esperado: 100101, 100111, 100113 e 100305. As de frequência (100102, 100112, 100114, 100306, 100307) precisam da sequência de eventos — colar a mesma linha 8 vezes dispara 100112/100306 no logtest, ou validar ao vivo pelo Kali.
+
 ## Desempenho
 
 O Wazuh divide a .50 com a aplicação. Sintomas de falta de recurso: dashboard lento ou "travando", serviço reiniciando sozinho (`docker service ps wazuh_manager` com várias tarefas `Shutdown`), agentes alternando entre *Active* e *Disconnected*.

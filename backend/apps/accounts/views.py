@@ -41,6 +41,9 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
+    # Requisição malformada também conta como falha de login (VULN-06) —
+    # ver apps/core/exceptions.py.
+    invalid_request_event = "login_failed"
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -70,6 +73,7 @@ class MfaVerifyView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "mfa"
+    invalid_request_event = "login_failed"
 
     def post(self, request):
         serializer = MfaVerifySerializer(data=request.data)

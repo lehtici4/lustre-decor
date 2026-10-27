@@ -4,8 +4,15 @@
 # interna .50). Etapa 3.4/3.5 do plano. Ver docs/deteccao.md.
 #
 # Uso (na raiz do repositório, como root):
-#   sudo ./infra/scripts/install-falco.sh
-#   sudo FALCO_VERSION=0.43.0 ./infra/scripts/install-falco.sh   # versão fixa
+#   sudo ./infra/scripts/install-falco.sh                         # 0.45.1 (padrão)
+#   sudo FALCO_VERSION=0.46.0 ./infra/scripts/install-falco.sh   # outra versão
+#
+# A versão é fixa por padrão (a mesma nas duas VMs) e o pacote fica em
+# "apt-mark hold": uma atualização automática do Ubuntu não troca o sensor
+# (nem o driver) no meio dos testes — mesmo raciocínio do hold do docker-ce.
+# Arquivos de configuração já existentes em /etc/falco são mantidos
+# (--force-confold): o postinst não para numa pergunta interativa nem
+# sobrescreve a configuração do Lustre Decor.
 #
 # Por que no host e não em container: o sensor não pode depender do daemon
 # Docker que ele vigia, e rodar Falco em container privilegiado contradiria o
@@ -19,7 +26,7 @@ fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="$REPO_DIR/infra/falco"
-FALCO_VERSION="${FALCO_VERSION:-}"
+FALCO_VERSION="${FALCO_VERSION:-0.45.1}"
 KEYRING=/usr/share/keyrings/falco-archive-keyring.gpg
 
 echo "==> Pré-requisitos do modern_ebpf (kernel >= 5.8 com BTF)"
@@ -52,10 +59,17 @@ echo "==> Instalando o pacote (driver modern_ebpf, sem falcoctl de atualização
 # do pacote, sem a tela interativa do dialog. FALCOCTL_ENABLED=no: as regras
 # ficam na versão instalada (reprodutível entre os testes), sem baixar
 # atualização em segundo plano.
-PKG=falco
-[[ -n "$FALCO_VERSION" ]] && PKG="falco=$FALCO_VERSION"
+if ! apt-cache madison falco | awk '{print $3}' | grep -qx "$FALCO_VERSION"; then
+    echo "Versão $FALCO_VERSION do Falco não está no repositório. Disponíveis:" >&2
+    apt-cache madison falco | awk '{print "  " $3}' | head -5 >&2
+    exit 1
+fi
+apt-mark unhold falco >/dev/null 2>&1 || true
 FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf FALCOCTL_ENABLED=no \
-    apt-get install -y -q "$PKG"
+    apt-get install -y -q --allow-downgrades \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        "falco=$FALCO_VERSION"
+apt-mark hold falco
 falco --version | head -1
 
 echo "==> Configuração e regras do Lustre Decor"

@@ -17,4 +17,9 @@ class AccountsConfig(AppConfig):
     name = "apps.accounts"
 
     def ready(self):
+        from django.contrib.auth.signals import user_login_failed
+
+        from .signals import log_login_failed
+
         post_migrate.connect(_ensure_roles, dispatch_uid="lustre_ensure_roles")
+        user_login_failed.connect(log_login_failed, dispatch_uid="lustre_log_login_failed")

@@ -30,6 +30,16 @@ def partner_order_items(user):
     )
 
 
+def _not_found(user, model: str, pk: int):
+    # ID inexistente: uma sequência deles do mesmo usuário é enumeração
+    # (regra 100112 do Wazuh, VULN-07).
+    logger.info(
+        "object_not_found",
+        extra={"user_id": user.id, "model": model, "object_id": pk, "scope": "partner"},
+    )
+    raise Http404
+
+
 def _forbidden(user, model: str, pk: int):
     logger.warning(
         "forbidden_object_access",
@@ -41,7 +51,7 @@ def _forbidden(user, model: str, pk: int):
 def get_owned_product(user, pk: int) -> Product:
     product = Product.objects.filter(pk=pk).select_related("store").first()
     if product is None:
-        raise Http404
+        _not_found(user, "Product", pk)
     if product.store_id is None or not partner_stores(user).filter(pk=product.store_id).exists():
         _forbidden(user, "Product", pk)
     return product
@@ -50,7 +60,7 @@ def get_owned_product(user, pk: int) -> Product:
 def get_owned_order_item(user, pk: int) -> OrderItem:
     item = OrderItem.objects.filter(pk=pk).select_related("order", "store").first()
     if item is None:
-        raise Http404
+        _not_found(user, "OrderItem", pk)
     if item.store_id is None or not partner_stores(user).filter(pk=item.store_id).exists():
         _forbidden(user, "OrderItem", pk)
     return item
@@ -63,7 +73,7 @@ def partner_campaigns(user):
 def get_owned_campaign(user, pk: int) -> Campaign:
     campaign = Campaign.objects.filter(pk=pk).select_related("store").first()
     if campaign is None:
-        raise Http404
+        _not_found(user, "Campaign", pk)
     if not partner_stores(user).filter(pk=campaign.store_id).exists():
         _forbidden(user, "Campaign", pk)
     return campaign

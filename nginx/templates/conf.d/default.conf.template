@@ -116,10 +116,15 @@ server {
     # django-two-factor-auth carrega Bootstrap/jQuery de lá (verificado em
     # 2026-09-05). O restante da aplicação (SPA React) usa só same-origin.
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
-    # Sem Strict-Transport-Security aqui de propósito: com certificado
-    # autoassinado, HSTS impede o navegador de deixar você "prosseguir mesmo
-    # assim" no aviso de certificado, travando o acesso local. Cabe ativar
-    # quando houver um certificado de CA confiável (ver nota acima).
+    # HSTS (VULN-04). Seguro mesmo com o certificado autoassinado atual: o
+    # navegador IGNORA o cabeçalho recebido numa conexão com erro de
+    # certificado (RFC 6797, §8.1), então o "prosseguir mesmo assim" continua
+    # funcionando — e também o ignora quando o site é acessado por IP literal
+    # (§8.1.1). Passa a valer de fato quando a loja for acessada por nome
+    # (ex.: via Twingate) com certificado de uma CA em que o navegador confia.
+    # Sem includeSubDomains/preload: o laboratório não tem domínio próprio.
+    # O Django mantém SECURE_HSTS_SECONDS=0 para o cabeçalho não sair em dobro.
+    add_header Strict-Transport-Security "max-age=31536000" always;
 
     # Salto waf -> backend também em TLS, com autenticação MÚTUA (mTLS):
     #   - o waf valida o certificado do backend contra a CA interna e pelo

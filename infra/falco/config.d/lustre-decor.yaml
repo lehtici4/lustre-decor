@@ -35,13 +35,14 @@ syslog_output:
 stdout_output:
   enabled: false
 
-# Servidor web embutido (/healthz). O padrão escuta em 0.0.0.0:8765 — era a
-# "porta 8765 sem serviço identificado" do pentest (VULN-05, .34 e .50). Só
-# localhost: ninguém de fora precisa do healthcheck do sensor.
+# Servidor web embutido (/healthz, métricas Prometheus): DESLIGADO. O padrão
+# escuta em 0.0.0.0:8765 — era a "porta 8765 sem serviço identificado" do
+# pentest (VULN-05, .34 e .50). Primeiro foi preso em 127.0.0.1 (26/10), mas
+# nada no projeto consome esse endpoint: a vivacidade do sensor é checada pelo
+# batimento no falco.json (regra 100230) e pelo systemctl. Porta que ninguém
+# usa não fica aberta, nem em localhost (27/10/2026).
 webserver:
-  enabled: true
-  listen_address: 127.0.0.1
-  listen_port: 8765
+  enabled: false
 
 # Batimento: um evento "Falco internal: metrics snapshot" a cada 15 min no
 # falco.json. O agente Wazuh confere se o arquivo mudou na última hora

@@ -43,6 +43,8 @@ def create_order_from_cart(user) -> Order:
 def get_owned_order(user, pk: int) -> Order:
     order = Order.objects.filter(pk=pk).prefetch_related("items").first()
     if order is None:
+        # Ver cart_service.get_owned_item (enumeração, VULN-07).
+        logger.info("object_not_found", extra={"user_id": user.id, "model": "Order", "object_id": pk})
         raise Http404
 
     if order.user_id != user.id:

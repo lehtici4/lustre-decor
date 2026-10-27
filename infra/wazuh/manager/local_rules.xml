@@ -17,11 +17,14 @@
     <description>Lustre Decor backend: evento de log.</description>
   </rule>
 
-  <!-- T08: força bruta no login -->
+  <!-- T08: força bruta no login. login_failed sai do sinal user_login_failed
+       (senha errada na API, no admin ou no two-factor: reason=bad_credentials)
+       e de requisição malformada nos endpoints de login/MFA
+       (reason=invalid_request, HTTP 400) - VULN-06. -->
   <rule id="100101" level="5">
     <if_sid>100100</if_sid>
     <field name="message">^login_failed$</field>
-    <description>Lustre Decor: falha de login (origem $(origin)).</description>
+    <description>Lustre Decor: falha de login ($(reason), origem $(origin)).</description>
     <mitre><id>T1110</id></mitre>
     <group>authentication_failed,</group>
   </rule>
@@ -63,7 +66,7 @@
     <field name="message">^forbidden_object_access$</field>
     <description>Lustre Decor: tentativa de acessar objeto de outro usuário ($(model) $(object_id), user_id $(user_id)).</description>
     <mitre><id>T1078</id></mitre>
-    <group>access_denied,</group>
+    <group>access_denied,lustre_object_probe,</group>
   </rule>
 
   <rule id="100107" level="12" frequency="3" timeframe="300">
@@ -72,6 +75,42 @@
     <description>Lustre Decor: enumeração de objetos de outros usuários pelo mesmo usuário ($(user_id)).</description>
     <mitre><id>T1078</id></mitre>
     <group>access_denied,</group>
+  </rule>
+
+  <!-- VULN-07: ID inexistente em rota de dono (carrinho, pedido, painel do
+       parceiro). Sozinho é ruído; em sequência, somado aos acessos a objeto
+       de outro usuário (grupo lustre_object_probe), é enumeração. -->
+  <rule id="100111" level="3">
+    <if_sid>100100</if_sid>
+    <field name="message">^object_not_found$</field>
+    <description>Lustre Decor: objeto inexistente pedido ($(model) $(object_id), user_id $(user_id)).</description>
+    <group>lustre_object_probe,</group>
+  </rule>
+
+  <rule id="100112" level="10" frequency="8" timeframe="120">
+    <if_matched_group>lustre_object_probe</if_matched_group>
+    <same_field>user_id</same_field>
+    <description>Lustre Decor: enumeração de IDs pelo mesmo usuário ($(user_id)) - 8 objetos inexistentes ou de terceiros em 2 min.</description>
+    <mitre><id>T1213</id><id>T1078</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <!-- VULN-07: usuário autenticado sem o papel exigido pedindo rota de
+       parceiro (API) ou do Django Admin - tentativa de escalonamento. -->
+  <rule id="100113" level="8">
+    <if_sid>100100</if_sid>
+    <field name="message">^privileged_route_denied$</field>
+    <description>Lustre Decor: usuário $(user_id) tentou rota privilegiada sem permissão ($(path)).</description>
+    <mitre><id>T1078</id></mitre>
+    <group>access_denied,privilege_escalation,</group>
+  </rule>
+
+  <rule id="100114" level="12" frequency="3" timeframe="300">
+    <if_matched_sid>100113</if_matched_sid>
+    <same_field>user_id</same_field>
+    <description>Lustre Decor: repetidas tentativas de rota privilegiada pelo mesmo usuário ($(user_id)) - escalonamento de privilégio.</description>
+    <mitre><id>T1078</id><id>T1068</id></mitre>
+    <group>access_denied,privilege_escalation,</group>
   </rule>
 
   <rule id="100108" level="3">
@@ -397,6 +436,35 @@
     <field name="upstream_status">^-$</field>
     <description>WAF: limite de taxa (limit_req) atingido por $(srcip) em $(url).</description>
     <mitre><id>T1110</id></mitre>
+  </rule>
+
+  <!-- VULN-06, visão da borda: falha de autenticação (401 do Django) ou
+       requisição de login malformada (400 do Django ou do próprio waf). Fica
+       independente do log do backend: se o salto até a .50 falhar, a DMZ
+       ainda registra a força bruta. -->
+  <rule id="100305" level="5">
+    <if_sid>100300</if_sid>
+    <status type="pcre2">^40[01]$</status>
+    <url type="pcre2">^/api/v1/auth/(?:login|mfa/verify)/$</url>
+    <description>WAF: falha de autenticação de $(srcip) em $(url) (HTTP $(status)).</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100306" level="10" frequency="8" timeframe="120">
+    <if_matched_sid>100305</if_matched_sid>
+    <same_srcip />
+    <description>WAF: 8 falhas de autenticação em 2 min da mesma origem ($(srcip)) - força bruta (T08).</description>
+    <mitre><id>T1110.001</id><id>T1110.003</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <rule id="100307" level="10" frequency="5" timeframe="120">
+    <if_matched_sid>100303</if_matched_sid>
+    <same_srcip />
+    <description>WAF: $(srcip) insiste depois do limite de taxa (5x 429 em 2 min) - ataque automatizado.</description>
+    <mitre><id>T1110</id><id>T1499</id></mitre>
+    <group>authentication_failures,</group>
   </rule>
 
   <!-- 502 com upstream 502: o waf não conseguiu falar com o backend (inclui falha do handshake mTLS) -->

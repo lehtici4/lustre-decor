@@ -187,8 +187,8 @@
   tags: [lustre_decor, host, mitre_defense_evasion, T1562.001]
 
 # Logs e evidências monitorados: access log do waf (Fail2ban/Wazuh), saída
-# do Falco, logs do agente Wazuh, fail2ban, auth/syslog e o diretório dos
-# dumps do Postgres (Etapa 5).
+# do Falco, logs do agente Wazuh, fail2ban, auth/syslog, auditoria do cofre
+# OpenBao (só na .50) e o diretório dos dumps do Postgres (Etapa 5).
 - macro: lustre_protected_path
   condition: >
     (fs.path.name startswith /var/log/lustre-waf/
@@ -198,11 +198,13 @@
      or fs.path.name startswith /var/log/auth.log
      or fs.path.name startswith /var/log/syslog
      or fs.path.name startswith /var/backups/lustre-decor/
+     or fs.path.name startswith /var/log/openbao/
      or fs.path.source startswith /var/log/lustre-waf/
      or fs.path.source startswith /var/log/falco/
      or fs.path.source startswith /var/ossec/logs/
      or fs.path.source startswith /var/log/fail2ban
-     or fs.path.source startswith /var/backups/lustre-decor/)
+     or fs.path.source startswith /var/backups/lustre-decor/
+     or fs.path.source startswith /var/log/openbao/)
 
 - list: lustre_log_maintainers
   items: [logrotate, rsyslogd, systemd-journal, fail2ban-server, falco, wazuh-logcollec, wazuh-agentd, wazuh-modulesd, wazuh-syscheckd, dpkg, apt, apt-get, find]
@@ -234,7 +236,8 @@
     and (fd.name startswith /var/log/lustre-waf/
          or fd.name startswith /var/log/falco/
          or fd.name startswith /var/ossec/logs/
-         or fd.name startswith /var/log/fail2ban)
+         or fd.name startswith /var/log/fail2ban
+         or fd.name startswith /var/log/openbao/)
     and not proc.name in (lustre_log_maintainers)
   output: >
     Log de seguranca truncado (file=%fd.name proc=%proc.name

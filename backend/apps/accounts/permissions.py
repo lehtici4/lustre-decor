@@ -22,6 +22,9 @@ class IsPartner(IsAuthenticatedWithMfa):
     """Parceiro com loja ativa, sessão verificada por MFA e conta não isenta."""
 
     message = "Acesso restrito a parceiros."
+    # Negar esta permissão a um usuário autenticado é tentativa de
+    # escalonamento: vira o evento privileged_route_denied (apps/core/exceptions.py).
+    privileged = True
 
     def has_permission(self, request, view) -> bool:
         from .roles import is_partner
