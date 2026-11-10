@@ -1,0 +1,11 @@
+<!-- Twingate Connector (journald, SYSLOG_IDENTIFIER=twingate-connector).
+     Linhas ANALYTICS (TWINGATE_LOG_ANALYTICS=v2) trazem JSON depois do prefixo. -->
+<decoder name="twingate-connector">
+  <program_name>twingate-connector</program_name>
+</decoder>
+
+<decoder name="twingate-analytics">
+  <parent>twingate-connector</parent>
+  <prematch>^ANALYTICS </prematch>
+  <plugin_decoder offset="after_prematch">JSON_Decoder</plugin_decoder>
+</decoder>

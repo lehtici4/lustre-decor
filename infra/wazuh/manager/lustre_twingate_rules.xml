@@ -1,0 +1,39 @@
+<!-- Twingate (faixa 1007xx). Decoder: lustre_twingate_decoders.xml.
+     v2 grava established_connection e closed_connection: so a abertura vira alerta. -->
+<group name="lustre,twingate,">
+
+  <rule id="100701" level="3">
+    <decoded_as>twingate-connector</decoded_as>
+    <field name="event_type" type="pcre2">^established_connection$</field>
+    <description>Twingate: $(user.email) acessou $(resource.address) ($(connection.resource_ip):$(connection.resource_port)) via $(connector.name)</description>
+    <mitre><id>T1133</id></mitre>
+  </rule>
+
+  <rule id="100702" level="8">
+    <if_sid>100701</if_sid>
+    <field name="connection.resource_port" type="pcre2">^8200$</field>
+    <description>Twingate: acesso ao cofre OpenBao por $(user.email) via $(connector.name)</description>
+    <mitre><id>T1133</id></mitre>
+  </rule>
+
+  <rule id="100703" level="8">
+    <if_sid>100701</if_sid>
+    <field name="connection.resource_ip" type="pcre2">^192\.168\.9\.16$</field>
+    <description>Twingate: acesso a GUI do pfSense por $(user.email) via $(connector.name)</description>
+    <mitre><id>T1133</id></mitre>
+  </rule>
+
+  <rule id="100704" level="7">
+    <decoded_as>twingate-connector</decoded_as>
+    <match>^State: Offline</match>
+    <description>Twingate: conector offline neste host (acesso administrativo indisponivel)</description>
+    <mitre><id>T1562.001</id></mitre>
+  </rule>
+
+  <rule id="100705" level="0">
+    <decoded_as>twingate-connector</decoded_as>
+    <match>^[ERROR] [libsdwan] [pubnub-lib]</match>
+    <description>Twingate: falha de conexao com o PubNub (normal segundo o suporte; silenciado)</description>
+  </rule>
+
+</group>

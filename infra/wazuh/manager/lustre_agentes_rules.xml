@@ -1,0 +1,17 @@
+<!-- Saude dos agentes (faixa 1008xx). Regras filhas: as originais 504/506
+     (0015-ossec_rules.xml, nivel 3) ficam intactas; a filha so sobe o nivel. -->
+<group name="lustre,saude_agente,">
+
+  <rule id="100801" level="10">
+    <if_sid>504</if_sid>
+    <description>LustreDecor: agente Wazuh desconectado (sem keepalive), coleta de logs parada nesse host</description>
+    <mitre><id>T1562.001</id></mitre>
+  </rule>
+
+  <rule id="100802" level="10">
+    <if_sid>506</if_sid>
+    <description>LustreDecor: agente Wazuh parado (servico encerrado no host)</description>
+    <mitre><id>T1562.001</id></mitre>
+  </rule>
+
+</group>
